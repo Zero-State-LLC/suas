@@ -1,5 +1,6 @@
+import { CHALLENGE_TTL_SECONDS } from '../../../src/auth/constants';
 import { expect, test } from '../fixtures';
-import type { Response } from '@playwright/test';
+import type { Page, Response } from '@playwright/test';
 import {
   newPerson,
   readSignInChallenge,
@@ -25,6 +26,31 @@ const CHALLENGES = /\/api\/v0\/auth\/challenges$/;
 const VERIFY = /\/api\/v0\/auth\/challenges\/commands\/verify$/;
 const WRONG_CODE = 'The sign-in code is invalid or has expired.';
 const TOO_MANY = /^Too many tries\. Try again in \d+ (minutes?|seconds?)\.$/;
+
+/** The code lifetime, read from the server constant so the two cannot drift. */
+const CODE_TTL_MS = CHALLENGE_TTL_SECONDS.value * 1000;
+
+/**
+ * Runs `ask`, which sends one code request, and returns the window its expiry must fall in:
+ * the TTL after the moment before the request, plus ε, the measured time until its answer.
+ * The API and this test read the same machine clock, so no skew is added.
+ */
+async function expiryWindow(
+  page: Page,
+  ask: () => Promise<void>,
+): Promise<{ from: number; to: number }> {
+  const issued = nextResponse(page, 'POST', CHALLENGES);
+  const before = Date.now();
+  await ask();
+  expect((await issued).status()).toBe(202);
+  return { from: before + CODE_TTL_MS, to: Date.now() + CODE_TTL_MS };
+}
+
+/** The delivered code's expiry lies in `expiry`: this request's code, not an older one. */
+function expectExpiryIn(expiresAt: number, expiry: { from: number; to: number }): void {
+  expect(expiresAt).toBeGreaterThanOrEqual(expiry.from);
+  expect(expiresAt).toBeLessThanOrEqual(expiry.to);
+}
 
 /** A real 429 from the sign-in budget: RATE_LIMITED with a positive Retry-After. */
 async function expectRateLimited(response: Response): Promise<void> {
@@ -145,8 +171,7 @@ test('asking again for a code makes the earlier code stop working', async ({
   const page = await newPerson(browser);
   const email = uniqueEmail('resend');
   await askForCode(page, email);
-  const first = await readSignInChallenge(request, email);
-  const firstCode = first.code;
+  const firstCode = await readSignInCode(request, email);
 
   // There is no "send a new code" button; "Use a different email" is the way back.
   await expect(page.getByRole('button', { name: /resend|new code|send again/i })).toHaveCount(0);
@@ -154,11 +179,13 @@ test('asking again for a code makes the earlier code stop working', async ({
   await expect(page).toHaveURL(/\/sign-in$/);
   await expect(page.getByLabel('Email address')).toHaveValue('');
   await page.getByLabel('Email address').fill(email);
-  await page.getByRole('button', { name: 'Send sign-in code' }).click();
+  const expiry = await expiryWindow(page, () =>
+    page.getByRole('button', { name: 'Send sign-in code' }).click(),
+  );
   await expect(page).toHaveURL(/\/sign-in\/code$/);
   let second = await readSignInChallenge(request, email);
   // A new delivery, not the first code read twice: a stale read must fail, not skip.
-  expect(second.expiresAt).toBeGreaterThan(first.expiresAt);
+  expectExpiryIn(second.expiresAt, expiry);
   // Two random six-digit codes can match (one in a million); then ask once more (the third of
   // three codes allowed in 15 minutes) instead of skipping the check.
   if (second.code === firstCode) {
@@ -181,15 +208,14 @@ test('a code that was already used does not sign in again', async ({ browser, re
     label: 'used-code',
     name: 'Uma V.',
   });
-  const used = await readSignInChallenge(request, email);
-  const usedCode = used.code;
+  const usedCode = await readSignInCode(request, email);
   await signOutFromAvatar(page, 'Uma');
   await expect(page).toHaveURL(/:\d+\/$/);
 
-  await askForCode(page, email);
+  const expiry = await expiryWindow(page, () => askForCode(page, email));
   let fresh = await readSignInChallenge(request, email);
   // A new delivery, not the used code read again: a stale read must fail, not skip.
-  expect(fresh.expiresAt).toBeGreaterThan(used.expiresAt);
+  expectExpiryIn(fresh.expiresAt, expiry);
   // A one-in-a-million match: ask once more (the third code in 15 minutes) instead of skipping.
   if (fresh.code === usedCode) {
     await askForCode(page, email);

@@ -3,7 +3,13 @@ import type { APIRequestContext, Page } from '@playwright/test';
 import { API_URL } from '../config';
 import { myUserId, newPerson, readSignInCode, shoot } from '../helpers';
 import { expireSessions } from '../time/time';
-import { errorCode, expectNoDeadControls, nextResponse, resetSignInLimits } from '../auth/auth';
+import {
+  errorCode,
+  expectNoDeadControls,
+  nextResponse,
+  readsAnswered,
+  resetSignInLimits,
+} from '../auth/auth';
 import { ADMIN_EMAIL, passMfa, signInAdmin, testFactorResponse } from './admin';
 
 const MFA_VERIFY = /\/api\/v0\/auth\/mfa\/challenges\/commands\/verify$/;
@@ -235,7 +241,13 @@ test('when two admin requests hit the expired session at once, sign-in still ret
   allow.push(/status of 401/);
   const page = await signInAdmin(browser, request);
   await page.goto('/admin/drafts');
+  // The drafts screen's first reads answer before the hold, so only the clicks below are held.
+  const firstReads = readsAnswered(page, [
+    /\/api\/v0\/admin\/build-info$/,
+    /\/api\/v0\/admin\/resource-drafts\?status=DRAFT(&|$)/,
+  ]);
   await passMfa(page);
+  await firstReads;
   await expect(page.getByRole('button', { name: 'To review', pressed: true })).toBeVisible();
   const held: { url: string; go: () => void }[] = [];
   await page.route('**/api/v0/**', async (route) => {
@@ -243,7 +255,6 @@ test('when two admin requests hit the expired session at once, sign-in still ret
     await new Promise<void>((go) => held.push({ url: route.request().url(), go }));
     await route.fallback();
   });
-  await page.waitForLoadState('networkidle');
   await expireSessions(await myUserId(page, request));
   const lists = () => held.filter((h) => h.url.includes('/admin/resource-drafts?'));
   await page.getByRole('button', { name: 'Published' }).click();
@@ -256,8 +267,11 @@ test('when two admin requests hit the expired session at once, sign-in still ret
   lists()[1]?.go();
   await second;
   await page.unroute('**/api/v0/**');
-  held.forEach((h) => h.go());
-  await page.waitForLoadState('networkidle');
+  // Release anything else held and wait for its answer, so no late 401 lands during sign-in.
+  const rest = held.filter((h) => !lists().includes(h));
+  const restAnswered = Promise.all(rest.map((h) => page.waitForResponse((r) => r.url() === h.url)));
+  rest.forEach((h) => h.go());
+  await restAnswered;
   await expect(page).toHaveURL(/\/sign-in$/);
   await signInAgain(page, request);
   await expect(page).toHaveURL(/\/admin\/mfa$/);

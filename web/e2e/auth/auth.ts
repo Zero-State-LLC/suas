@@ -94,6 +94,28 @@ export function nextResponse(page: Page, method: string, path: RegExp): Promise<
   );
 }
 
+/** The profile read, sent once per page load (it stays fresh for 30 s). */
+export const ME_READ = /\/api\/v0\/veterans\/me$/;
+
+/** Home's own reads on arrival: the person's requests and the header's chat threads. */
+export const HOME_READS: readonly RegExp[] = [
+  /\/api\/v0\/service-requests\?ownership=requested(&|$)/,
+  /\/api\/v0\/chat\/threads(\?|$)/,
+];
+
+/**
+ * Resolves once one GET to each of `urls` has answered 200. Start it before the action that
+ * sends them. `networkidle` only covers a document's first load, not in-app moves or polls.
+ */
+export async function readsAnswered(page: Page, urls: readonly RegExp[]): Promise<void> {
+  const responses = await Promise.all(
+    urls.map((url) =>
+      page.waitForResponse((r) => r.request().method() === 'GET' && url.test(r.url())),
+    ),
+  );
+  for (const response of responses) expect(response.status(), response.url()).toBe(200);
+}
+
 /** The `error.code` of an /api/v0 error envelope. */
 export async function errorCode(response: Response): Promise<string | undefined> {
   return ((await response.json()) as { error?: { code?: string } }).error?.code;

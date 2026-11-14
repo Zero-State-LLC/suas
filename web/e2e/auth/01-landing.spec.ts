@@ -1,7 +1,21 @@
 import { expect, test } from '../fixtures';
 import type { Page } from '@playwright/test';
 import { newPerson, shoot } from '../helpers';
-import { LANDING, expectNoDeadControls, signedUpPerson } from './auth';
+import {
+  HOME_READS,
+  LANDING,
+  ME_READ,
+  expectNoDeadControls,
+  readsAnswered,
+  signedUpPerson,
+} from './auth';
+
+/** Serve's reads on arrival: the person's own requests, their alerts and the open board. */
+const SERVE_READS = [
+  /\/api\/v0\/service-requests\?ownership=mine(&|$)/,
+  /\/api\/v0\/notifications(\?|$)/,
+  /\/api\/v0\/service-requests\?ownership=open(&|$)/,
+];
 
 /** The crisis strip and footer links every screen carries (SAFETY_COPY.md §2.2, §2.3). */
 async function expectCrisisLinks(page: Page): Promise<void> {
@@ -70,15 +84,20 @@ test('a signed-in person on the landing page goes to their homes, not to sign-in
   await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toHaveCount(0);
   await expectNoDeadControls(page);
 
+  // Home's and Serve's reads answer before moving on: one still in flight would race the
+  // sign-out below.
+  const homeReads = readsAnswered(page, [ME_READ, ...HOME_READS]);
   await page.getByRole('link', { name: /I need support/ }).click();
   await expect(page).toHaveURL(/\/home$/);
+  await homeReads;
   await page.goBack();
+  const serveReads = readsAnswered(page, SERVE_READS);
   await page.getByRole('link', { name: /I want to serve/ }).click();
   await expect(page).toHaveURL(/\/serve$/);
+  await serveReads;
   await page.goBack();
   await expect(page).toHaveURL(LANDING);
-  // Serve's reads still in flight would race the sign-out.
-  await page.waitForLoadState('networkidle');
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
 
   // Sign out from the landing header stays on the landing page, signed out.
   await page.getByRole('button', { name: 'Sign out' }).click();

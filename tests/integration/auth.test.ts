@@ -9,7 +9,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../../src/config/index.js';
 import {
   ChallengeVerificationFailedError,
@@ -27,6 +27,7 @@ import {
   CHALLENGE_ISSUE_LIMIT,
   CHALLENGE_ISSUE_WINDOW_SECONDS,
   CHALLENGE_MAX_ATTEMPTS,
+  CHALLENGE_TTL_SECONDS,
 } from '../../src/auth/index.js';
 import { resolveAuthContext } from '../../src/authz/index.js';
 import {
@@ -197,6 +198,36 @@ describe('AUTH.md §3 — challenge contract', () => {
     await expect(
       verifyChallenge(deps(delivery), { tenantId, destination: email, secret }),
     ).rejects.toThrow(ChallengeVerificationFailedError);
+  });
+
+  // Pins the 15-minute pilot TTL to the server clock; web/e2e/auth/02-sign-in derives from it.
+  // Only Date is faked, so pg's sockets and timers keep running.
+  it('stamps expiry at exactly issue time plus CHALLENGE_TTL_SECONDS (900 s)', async () => {
+    const { tenantId, email } = await enrolledVeteran();
+    const delivery = new RecordingChallengeDelivery('fake', ['EMAIL']);
+    const issuedAt = new Date('2026-11-14T12:00:00.000Z');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(issuedAt);
+    let result;
+    try {
+      result = await issueChallenge(deps(delivery), {
+        tenantId,
+        destination: email,
+        method: 'EMAIL_OTP',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(CHALLENGE_TTL_SECONDS.value).toBe(900);
+    const expected = issuedAt.getTime() + 900_000;
+    expect(result.expiresAt?.getTime()).toBe(expected);
+    expect(delivery.lastFor(email.toLowerCase())?.expiresAt.getTime()).toBe(expected);
+    const stored = await pool.query<{ expires_at: Date }>(
+      `SELECT expires_at FROM auth_challenges WHERE auth_challenge_id = $1`,
+      [result.challengeId],
+    );
+    expect(stored.rows[0]?.expires_at.getTime()).toBe(expected);
   });
 
   it('does not issue for an unenrolled destination, and does not say so', async () => {
