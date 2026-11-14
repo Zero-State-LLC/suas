@@ -82,6 +82,9 @@ describe('capabilityRows', () => {
     expect(capabilityRows({ ...resend, resend_api_key_configured: false })[0]?.status).toBe(
       'Not configured',
     );
+    expect(capabilityRows({ email_mode: 'resend', email_relay_configured: true })[0]?.status).toBe(
+      'Configured',
+    );
   });
 
   it('marks gmail_smtp as configured by its relay or by its address and app password', () => {

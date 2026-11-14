@@ -270,6 +270,46 @@ describe('ENVIRONMENT.md §3 — provider surfaces fail closed', () => {
     expect(missing.join('\n')).toContain('SUAS_EMAIL_FROM is required');
   });
 
+  // suas #305: in the VPC, the outside-VPC relay holds the Resend key and the sender.
+  describe('Resend through the email relay', () => {
+    const viaRelay = (overrides: Record<string, string | undefined> = {}) =>
+      validEnv({
+        SUAS_ENV: 'STAGING',
+        SUAS_EMAIL_MODE: 'resend',
+        SUAS_EMAIL_RELAY_FUNCTION: 'suas-email-relay',
+        SUAS_AWS_REGION: 'us-west-2',
+        ...overrides,
+      });
+
+    it('accepts the relay with no key or sender in this process', () => {
+      const config = loadConfig(viaRelay());
+      expect(config.notifications.relayFunction).toBe('suas-email-relay');
+      expect(config.notifications.resendApiKey).toBeUndefined();
+      expect(JSON.stringify(describeConfig(config))).toContain('"email_relay_configured":true');
+    });
+
+    it('refuses the key or the sender beside the relay, and needs a region and a function name', () => {
+      const issues = issuesFor(
+        viaRelay({
+          RESEND_API_KEY: 'test-resend-key-not-a-secret',
+          SUAS_EMAIL_FROM: 'sender@example.invalid',
+          SUAS_AWS_REGION: undefined,
+        }),
+      ).join('\n');
+      expect(issues).toContain('RESEND_API_KEY must not be set with SUAS_EMAIL_RELAY_FUNCTION');
+      expect(issues).toContain('SUAS_EMAIL_FROM must not be set with SUAS_EMAIL_RELAY_FUNCTION');
+      expect(issues).toContain('SUAS_AWS_REGION is required');
+      expect(
+        issuesFor(viaRelay({ SUAS_EMAIL_RELAY_FUNCTION: 'not a function' })).join('\n'),
+      ).toContain('SUAS_EMAIL_RELAY_FUNCTION must be a Lambda function name or ARN');
+    });
+
+    it('still refuses resend in LOCAL and TEST', () => {
+      expect(issuesFor(viaRelay({ SUAS_ENV: 'TEST' })).join('\n')).toContain('forbidden in TEST');
+      expect(issuesFor(viaRelay({ SUAS_ENV: 'LOCAL' })).join('\n')).toContain('forbidden in LOCAL');
+    });
+  });
+
   it('requires a fixed tenant for browser EMAIL OTP', () => {
     const issues = issuesFor(validEnv({ SUAS_BROWSER_AUTH_MODE: 'email_otp' }));
     expect(issues.join('\n')).toContain('SUAS_BROWSER_TENANT_ID is required');
