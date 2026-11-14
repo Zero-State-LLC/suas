@@ -12,7 +12,6 @@ import { describeConfig, loadConfig, tryLoadConfig } from '../../src/config/inde
 import { createChannelRegistry } from '../../src/notifications/channels.js';
 import {
   GmailSmtpEmailChannel,
-  stagingRecipientAllowed,
   type GmailSmtpEmailLogRecord,
 } from '../../src/notifications/gmail-smtp-email.js';
 import {
@@ -22,6 +21,7 @@ import {
 } from '../../src/notifications/gmail-smtp-sender.js';
 import { LambdaRelaySmtpSender } from '../../src/notifications/lambda-relay-sender.js';
 import type { SmtpMessage, SmtpSendResult } from '../../src/notifications/smtp.js';
+import { stagingRecipientAllowed } from '../../src/notifications/staging-recipients.js';
 import { validEnv } from '../helpers/env.js';
 
 const USER = 'suas.staging.sender@example.invalid';

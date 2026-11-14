@@ -14,10 +14,6 @@
 
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { z } from 'zod';
-import {
-  stagingRecipientAllowed,
-  type RecipientAllowed,
-} from '../notifications/gmail-smtp-email.js';
 import { GmailSmtpSender } from '../notifications/gmail-smtp-sender.js';
 import {
   fromRelayRequest,
@@ -26,6 +22,10 @@ import {
   type SmtpRelayResponse,
   type SmtpSender,
 } from '../notifications/smtp.js';
+import {
+  stagingRecipientAllowed,
+  type RecipientAllowed,
+} from '../notifications/staging-recipients.js';
 
 const credentialsSchema = z.object({
   SUAS_SMTP_USER: z.string().email(),

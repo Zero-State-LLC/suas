@@ -10,11 +10,11 @@
  *   message data is retryable.
  */
 
-import { isStagingFixtureAddress } from '../auth/staging-access.js';
 import type { NotificationChannelPort, OutboundMessage, SendAcknowledgement } from './channels.js';
 import { GmailSmtpSender } from './gmail-smtp-sender.js';
 import { LambdaRelaySmtpSender } from './lambda-relay-sender.js';
 import { smtpMessageId, type SmtpResultClass, type SmtpSender } from './smtp.js';
+import { stagingRecipientAllowed, type RecipientAllowed } from './staging-recipients.js';
 
 export const GMAIL_SMTP_IMPLEMENTATION = 'gmail_smtp' as const;
 
@@ -26,20 +26,6 @@ export const GMAIL_SMTP_FAILURE_REASONS = {
   invalid_message: 'invalid_message',
   recipient_not_allowed: 'recipient_not_allowed',
 } as const;
-
-/** May the last hop send to this address? */
-export type RecipientAllowed = (to: string) => boolean;
-
-/**
- * The STAGING last-hop allowlist (r263 F2): a synthetic address (RFC 2606/6761 reserved
- * domains), or a `+tag` address of the configured fixture mailbox (R11.7), never the bare
- * mailbox. With no mailbox configured, only synthetic addresses pass, so nothing real is sent.
- * gmail_smtp is refused in LOCAL and TEST and PRODUCTION is refused as a whole, so STAGING is
- * the only class that reaches this channel.
- */
-export function stagingRecipientAllowed(mailbox: string | undefined): RecipientAllowed {
-  return (to) => isStagingFixtureAddress(to, mailbox);
-}
 
 /** Structured send log. Never includes addresses, subjects, bodies or server replies. */
 export interface GmailSmtpEmailLogRecord {
