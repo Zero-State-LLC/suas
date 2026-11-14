@@ -1,6 +1,5 @@
 import { useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
-import type { Schemas } from '../../api/types';
 import { paths } from '../../app/paths';
 import { Button } from '../../components/Button';
 import { Card } from '../../components/Card';
@@ -18,8 +17,8 @@ import {
 import { allRequestsFinal, commandErrorMessage } from './case-logic';
 
 /**
- * R11.1: a holder wraps up the Case once every request of it is final. Resolve records a
- * Settlement of four typed parts; Close is a separate, confirmed step.
+ * R11.1, R13.1 (proposal): a holder wraps up an ASSIGNED or ACTIVE Case once every request of
+ * it is final. Resolve records a Settlement of four typed parts; Close is a separate, confirmed step.
  */
 export function WrapUpCard({ caseId }: { caseId: string }) {
   const list = useCaseServiceRequests(caseId);
@@ -40,7 +39,7 @@ function WrapUp({ caseId }: { caseId: string }) {
       </Shell>
     );
   }
-  if (status === 'ASSIGNED' || status === 'ACTIVE' || status === 'FOLLOWUP') {
+  if (status === 'ASSIGNED' || status === 'ACTIVE') {
     return (
       <Shell>
         <SettlementForm caseId={caseId} status={status} />
@@ -62,13 +61,13 @@ function Shell({ children }: { children: ReactNode }) {
 }
 
 const FIELDS: { name: keyof SettlementText; label: string }[] = [
-  { name: 'requested', label: 'What was asked for' },
+  { name: 'requested', label: 'What they asked for' },
   { name: 'occurred', label: 'What happened' },
   { name: 'fulfilled', label: 'What was done' },
-  { name: 'unresolved', label: 'Anything left undone' },
+  { name: 'unresolved', label: 'Anything still open' },
 ];
 
-function SettlementForm({ caseId, status }: { caseId: string; status: Schemas['CaseStatus'] }) {
+function SettlementForm({ caseId, status }: { caseId: string; status: 'ASSIGNED' | 'ACTIVE' }) {
   const [text, setText] = useState<SettlementText>({
     requested: '',
     occurred: '',
@@ -95,6 +94,11 @@ function SettlementForm({ caseId, status }: { caseId: string; status: Schemas['C
       }}
     >
       <p>Every request here is finished. Note what happened before you close the case.</p>
+      {/* veteranVisibleSettlement (src/settlement/settlements.ts) omits only `occurred`. */}
+      <p className="text-slate">
+        The person you helped can read “What they asked for”, “What was done” and “Anything still
+        open”.
+      </p>
       {FIELDS.map((field) => (
         <TextArea
           key={field.name}

@@ -340,9 +340,20 @@ describe('Wrap up', () => {
     expect(wrapUp()).toBeNull();
   });
 
-  it('shows once every request of the case is final', async () => {
+  it('shows once every request of the case is final, and says what the requester can read', async () => {
     renderCase();
-    expect(await screen.findByRole('region', { name: 'Wrap up this case' })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Wrap up this case' })).toHaveTextContent(
+      'The person you helped can read “What they asked for”, “What was done” and “Anything still open”.',
+    );
+  });
+
+  it('offers no wrap up on a case in FOLLOWUP', async () => {
+    replies.supportCase = supportCase('FOLLOWUP');
+    await settledList('Cancelled');
+    await waitFor(() =>
+      expect(client.GET).toHaveBeenCalledWith('/api/v0/cases/{id}', expect.anything()),
+    );
+    expect(wrapUp()).toBeNull();
   });
 
   it('is not shown to someone who does not hold a request here', async () => {
@@ -355,10 +366,10 @@ describe('Wrap up', () => {
   async function fillAndSubmit() {
     const card = await screen.findByRole('region', { name: 'Wrap up this case' });
     const fields: [RegExp, string][] = [
-      [/What was asked for/, 'A ride to the clinic'],
+      [/What they asked for/, 'A ride to the clinic'],
       [/What happened/, 'Drove Marcus there and back'],
       [/What was done/, 'The ride'],
-      [/Anything left/, 'Nothing'],
+      [/Anything still open/, 'Nothing'],
     ];
     for (const [label, text] of fields) {
       await userEvent.type(within(card).getByRole('textbox', { name: label }), text);
@@ -389,6 +400,7 @@ describe('Wrap up', () => {
       body: resolveBody,
       headers: key,
     });
+    expect(keyOf(1)).not.toBe(keyOf(0));
   });
 
   it('resolves an ACTIVE case without activating it again', async () => {
