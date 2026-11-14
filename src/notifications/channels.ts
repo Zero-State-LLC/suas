@@ -207,8 +207,8 @@ export class FailingChannel implements NotificationChannelPort {
  * D-004 selects Resend as the external EMAIL provider; R11.2 (released in 0.10.0) added
  * `gmail_smtp` for v1 STAGING. Fake and sink stay recording-only; `resend` and `gmail_smtp`
  * construct their adapters with validated configuration. `resend` sends through the
- * outside-VPC relay function when one is configured (suas #305), else directly. Both check
- * the STAGING recipient allowlist first.
+ * outside-VPC relay function when one is configured (suas #305; STAGING config requires it),
+ * else directly. Both check the STAGING recipient allowlist first.
  */
 export function createChannelRegistry(
   config: SuasConfig,

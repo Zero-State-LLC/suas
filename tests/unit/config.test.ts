@@ -231,31 +231,12 @@ describe('ENVIRONMENT.md §3 — provider surfaces fail closed', () => {
     expect(issues.join('\n')).toContain(`${varName}="${value}" is not a released value`);
   });
 
-  it('accepts Resend only in STAGING with required configuration', () => {
-    const config = loadConfig(
-      validEnv({
-        SUAS_ENV: 'STAGING',
-        SUAS_EMAIL_MODE: 'resend',
-        RESEND_API_KEY: 'test-resend-key-not-a-secret',
-        SUAS_EMAIL_FROM: 'sender@example.invalid',
-      }),
-    );
-    expect(config.notifications.email).toBe('resend');
-  });
-
-  it('accepts a Resend display-name sender', () => {
-    const config = loadConfig(
-      validEnv({
-        SUAS_ENV: 'STAGING',
-        SUAS_EMAIL_MODE: 'resend',
-        RESEND_API_KEY: 'test-resend-key-not-a-secret',
-        SUAS_EMAIL_FROM: 'SUAS Auth <auth@example.invalid>',
-      }),
-    );
+  it('accepts a display-name sender', () => {
+    const config = loadConfig(validEnv({ SUAS_EMAIL_FROM: 'SUAS Auth <auth@example.invalid>' }));
     expect(config.notifications.emailFrom).toBe('SUAS Auth <auth@example.invalid>');
   });
 
-  it('rejects Resend in LOCAL/TEST and when required configuration is absent', () => {
+  it('rejects Resend in LOCAL/TEST', () => {
     const testIssues = issuesFor(
       validEnv({
         SUAS_EMAIL_MODE: 'resend',
@@ -264,10 +245,25 @@ describe('ENVIRONMENT.md §3 — provider surfaces fail closed', () => {
       }),
     );
     expect(testIssues.join('\n')).toContain('forbidden in TEST');
+  });
 
-    const missing = issuesFor(validEnv({ SUAS_ENV: 'STAGING', SUAS_EMAIL_MODE: 'resend' }));
-    expect(missing.join('\n')).toContain('RESEND_API_KEY is required');
-    expect(missing.join('\n')).toContain('SUAS_EMAIL_FROM is required');
+  // suas #313 review: the STAGING VPC has no egress, so the relay is the only STAGING path.
+  it.each([
+    ['with the key and sender', 'test-resend-key-not-a-secret', 'sender@example.invalid'],
+    ['with nothing set', undefined, undefined],
+  ])('refuses direct Resend in STAGING %s', (_label, apiKey, from) => {
+    const issues = issuesFor(
+      validEnv({
+        SUAS_ENV: 'STAGING',
+        SUAS_EMAIL_MODE: 'resend',
+        RESEND_API_KEY: apiKey,
+        SUAS_EMAIL_FROM: from,
+      }),
+    ).join('\n');
+    expect(issues).toContain(
+      'SUAS_EMAIL_MODE=resend in STAGING requires SUAS_EMAIL_RELAY_FUNCTION; direct Resend from the VPC is refused.',
+    );
+    expect(issues).not.toContain('RESEND_API_KEY is required');
   });
 
   // suas #305: in the VPC, the outside-VPC relay holds the Resend key and the sender.

@@ -433,14 +433,25 @@ describe('challenge delivery uses the same EMAIL port', () => {
 
 describe('ENVIRONMENT.md §3 — Resend is the released EMAIL mode', () => {
   it('constructs ResendEmailChannel only when the mode is selected', () => {
-    const config = loadConfig(
+    // STAGING config refuses direct Resend (relay only); PRODUCTION is refused as a whole, so
+    // the direct branch is reached by dropping the relay from a loaded config.
+    const relayed = loadConfig(
       validEnv({
         SUAS_ENV: 'STAGING',
         SUAS_EMAIL_MODE: 'resend',
-        RESEND_API_KEY: API_KEY,
-        SUAS_EMAIL_FROM: FROM,
+        SUAS_EMAIL_RELAY_FUNCTION: 'suas-email-relay',
+        SUAS_AWS_REGION: 'us-west-2',
       }),
     );
+    const config = {
+      ...relayed,
+      notifications: {
+        ...relayed.notifications,
+        relayFunction: undefined,
+        resendApiKey: API_KEY,
+        emailFrom: FROM,
+      },
+    };
     const registry = createChannelRegistry(config);
     const email = registry.get('EMAIL');
     expect(email).toBeInstanceOf(ResendEmailChannel);

@@ -1357,19 +1357,28 @@ export const configSchema = rawConfigSchema.superRefine((raw, ctx) => {
         message: `SUAS_EMAIL_MODE=resend is forbidden in ${environment}; use fake or sink.`,
       });
     }
-    // Through the relay, the key and the sender live on the relay function only.
+    // Through the relay, the key and the sender live on the relay function only. The STAGING
+    // VPC has no internet egress, so STAGING has no direct Resend path (suas #305).
     const viaRelay = raw.SUAS_EMAIL_RELAY_FUNCTION !== undefined;
-    for (const name of ['RESEND_API_KEY', 'SUAS_EMAIL_FROM'] as const) {
-      if (viaRelay && raw[name] !== undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `${name} must not be set with SUAS_EMAIL_RELAY_FUNCTION; the relay holds it.`,
-        });
-      } else if (!viaRelay && raw[name] === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `${name} is required when SUAS_EMAIL_MODE=resend.`,
-        });
+    if (environment === 'STAGING' && !viaRelay) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'SUAS_EMAIL_MODE=resend in STAGING requires SUAS_EMAIL_RELAY_FUNCTION; direct Resend from the VPC is refused.',
+      });
+    } else {
+      for (const name of ['RESEND_API_KEY', 'SUAS_EMAIL_FROM'] as const) {
+        if (viaRelay && raw[name] !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${name} must not be set with SUAS_EMAIL_RELAY_FUNCTION; the relay holds it.`,
+          });
+        } else if (!viaRelay && raw[name] === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${name} is required when SUAS_EMAIL_MODE=resend.`,
+          });
+        }
       }
     }
   }
