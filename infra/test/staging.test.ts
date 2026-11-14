@@ -53,7 +53,7 @@ describe('network', () => {
         p,
       ]),
     );
-    // Lambda, to invoke the SMTP relay (R11.2). No SES endpoint.
+    // Lambda, to invoke the email relay (suas #305). No SES endpoint.
     expect(Object.keys(byService).sort()).toEqual(['lambda', 's3']);
     expect(byService.s3?.VpcEndpointType).toBe('Gateway');
     for (const name of ['lambda']) {
@@ -241,8 +241,8 @@ describe('functions', () => {
       expect(result.ok ? [] : result.issues, name).toEqual([]);
       if (result.ok && fn.Properties?.Handler === 'run.sh') {
         expect(result.config.environment).toBe('STAGING');
-        expect(result.config.notifications.email).toBe('gmail_smtp');
-        expect(result.config.notifications.smtp.relayFunction).toBeDefined();
+        expect(result.config.notifications.email).toBe('resend');
+        expect(result.config.notifications.relayFunction).toBeDefined();
         expect(result.config.modelInference.mode).toBe('disabled');
         expect(result.config.modelInference.bedrockModelId).toBeUndefined();
         expect(result.config.idVerification.mode).toBe('disabled');
@@ -341,7 +341,8 @@ describe('IAM', () => {
   });
 });
 
-describe('SMTP relay (R11.2)', () => {
+// suas #305: Resend from outside the VPC; only the relay holds the key and the sender.
+describe('email relay', () => {
   type Policy = { Roles: Array<{ Ref: string }>; Statement: Array<Record<string, any>> };
   const policies = (): Policy[] =>
     ofType(s.backend, 'AWS::IAM::Policy').map(([, p]) => ({
@@ -350,7 +351,7 @@ describe('SMTP relay (R11.2)', () => {
     }));
   const relay = (): [string, Resource] => {
     const found = ofType(s.backend, 'AWS::Lambda::Function').find(
-      ([, r]) => r.Properties?.Handler === 'smtp-relay.handler',
+      ([, r]) => r.Properties?.Handler === 'email-relay.handler',
     );
     if (found === undefined) throw new Error('no relay function');
     return found;
@@ -362,21 +363,40 @@ describe('SMTP relay (R11.2)', () => {
     return String(fn?.[1].Properties?.Role['Fn::GetAtt'][0]);
   };
 
-  it('runs outside the VPC, with no database setting and only its secret id', () => {
+  it('runs outside the VPC, with no database setting, its secret id, sender and allowlist', () => {
     const [, fn] = relay();
     expect(fn.Properties?.VpcConfig).toBeUndefined();
-    expect(Object.keys(fn.Properties?.Environment.Variables)).toEqual([
-      'SUAS_SMTP_SECRET_ID',
+    const variables = fn.Properties?.Environment.Variables as Record<string, unknown>;
+    expect(Object.keys(variables).sort()).toEqual([
+      'SUAS_EMAIL_FROM',
+      'SUAS_EMAIL_SECRET_ID',
       'SUAS_STAGING_FIXTURE_MAILBOX',
     ]);
-    expect(JSON.stringify(fn.Properties?.Environment.Variables)).toContain('SmtpRelayCredentials');
+    expect(JSON.stringify(variables.SUAS_EMAIL_SECRET_ID)).toContain('EmailRelayApiKey');
     expect(JSON.stringify(fn)).not.toMatch(/DATABASE_URL|ProxySg|DatabaseSg|LambdaSg/);
   });
 
+  it('takes the sender from a deploy-time SSM parameter, with no default address', () => {
+    const [, fn] = relay();
+    const from = fn.Properties?.Environment.Variables.SUAS_EMAIL_FROM as { Ref: string };
+    const parameter = parametersOf(s.backend)[from.Ref] as Resource & { Default?: string };
+    expect(parameter.Type).toBe('AWS::SSM::Parameter::Value<String>');
+    expect(parameter.Default).toBe('/suas/staging/email-from');
+  });
+
+  it('holds only the Resend key in its secret, as a placeholder the operator replaces', () => {
+    const secrets = ofType(s.backend, 'AWS::SecretsManager::Secret').filter(([id]) =>
+      id.startsWith('EmailRelayApiKey'),
+    );
+    expect(secrets).toHaveLength(1);
+    const generated = secrets[0]?.[1].Properties?.GenerateSecretString;
+    expect(JSON.parse(generated.SecretStringTemplate)).toEqual({ RESEND_API_KEY: '' });
+  });
+
   it('lets only the relay role read its secret, and the relay role nothing else', () => {
-    const relayRole = roleOf('smtp-relay.handler');
+    const relayRole = roleOf('email-relay.handler');
     const reads = policies().filter((p) =>
-      p.Statement.some((st) => JSON.stringify(st.Resource).includes('SmtpRelayCredentials')),
+      p.Statement.some((st) => JSON.stringify(st.Resource).includes('EmailRelayApiKey')),
     );
     expect(reads.map((p) => p.Roles.map((r) => r.Ref))).toEqual([[relayRole]]);
     const relayPolicies = policies().filter((p) => p.Roles.some((r) => r.Ref === relayRole));
@@ -385,7 +405,7 @@ describe('SMTP relay (R11.2)', () => {
       const actions = [st.Action].flat() as string[];
       expect(actions.every((a) => /^(secretsmanager|logs):/.test(a))).toBe(true);
       if (actions.some((a) => a.startsWith('secretsmanager:'))) {
-        expect(JSON.stringify(st.Resource)).toContain('SmtpRelayCredentials');
+        expect(JSON.stringify(st.Resource)).toContain('EmailRelayApiKey');
         expect(st.Resource).not.toBe('*');
       }
     }
@@ -396,7 +416,7 @@ describe('SMTP relay (R11.2)', () => {
       p.Statement.some(
         (st) =>
           [st.Action].flat().includes('lambda:InvokeFunction') &&
-          JSON.stringify(st.Resource).includes('SmtpRelayFunction'),
+          JSON.stringify(st.Resource).includes('EmailRelayFunction'),
       );
     const invokers = policies().filter(invokesRelay);
     expect(invokers.flatMap((p) => p.Roles.map((r) => r.Ref)).sort()).toEqual(
@@ -408,17 +428,74 @@ describe('SMTP relay (R11.2)', () => {
         [x.Action].flat().includes('lambda:InvokeFunction'),
       )) {
         for (const resource of [st.Resource].flat()) {
-          expect(JSON.stringify(resource)).toContain('SmtpRelayFunction');
+          expect(JSON.stringify(resource)).toContain('EmailRelayFunction');
         }
       }
     }
   });
 
-  it('keeps the app password out of every function environment', () => {
+  // suas #313 review: no Function URL and no resource policy, in any stack. The only way in is
+  // an identity-policy invoke on the API or job-worker role, scoped to the relay's ARN.
+  it('has no Function URL or Lambda::Permission; only the API and worker roles may invoke it', () => {
+    const [relayId] = relay();
+    const all = [s.dns, s.webCert, s.backend, s.web].flatMap((t) => Object.values(resourcesOf(t)));
+    expect(all.filter((r) => r.Type === 'AWS::Lambda::Url')).toEqual([]);
+    expect(
+      all.filter(
+        (r) => r.Type === 'AWS::Lambda::Permission' && /EmailRelay/.test(JSON.stringify(r)),
+      ),
+    ).toEqual([]);
+
+    // Every Allow statement, from attached, managed and inline policies, that could invoke it.
+    const documents = all.flatMap((r) => {
+      const roles = JSON.stringify(r.Properties?.Roles ?? null);
+      if (r.Type === 'AWS::IAM::Policy' || r.Type === 'AWS::IAM::ManagedPolicy') {
+        return [{ roles, statements: r.Properties?.PolicyDocument.Statement ?? [] }];
+      }
+      if (r.Type === 'AWS::IAM::Role') {
+        return (r.Properties?.Policies ?? []).map((p: { PolicyDocument: any }) => ({
+          roles: 'inline',
+          statements: p.PolicyDocument.Statement,
+        }));
+      }
+      return [];
+    });
+    const coversInvoke = (a: string): boolean => a === '*' || /^lambda:(\*|Invoke)/.test(a);
+    const coversRelay = (resource: unknown): boolean =>
+      typeof resource === 'string'
+        ? resource.includes('*')
+        : /EmailRelay/.test(JSON.stringify(resource));
+    const grants = documents.flatMap(({ roles, statements }) =>
+      (statements as Array<Record<string, any>>)
+        .filter(
+          (st) =>
+            st.Effect === 'Allow' &&
+            [st.Action].flat().some(coversInvoke) &&
+            [st.Resource].flat().some(coversRelay),
+        )
+        .map((st) => ({ roles, action: st.Action, resource: st.Resource })),
+    );
+    const relayArn = { 'Fn::GetAtt': [relayId, 'Arn'] };
+    const scoped = {
+      action: 'lambda:InvokeFunction',
+      resource: [relayArn, { 'Fn::Join': ['', [relayArn, ':*']] }],
+    };
+    const byRoles = (a: { roles: string }, b: { roles: string }) => a.roles.localeCompare(b.roles);
+    expect(grants.sort(byRoles)).toEqual(
+      [
+        { roles: JSON.stringify([{ Ref: roleOf('run.sh') }]), ...scoped },
+        { roles: JSON.stringify([{ Ref: roleOf('job-worker.handler') }]), ...scoped },
+      ].sort(byRoles),
+    );
+  });
+
+  it('keeps the Resend key out of every function environment, and the sender on the relay only', () => {
     for (const [, fn] of ofType(s.backend, 'AWS::Lambda::Function')) {
       const variables = (fn.Properties?.Environment?.Variables ?? {}) as Record<string, unknown>;
-      expect(variables).not.toHaveProperty('SUAS_SMTP_APP_PASSWORD');
-      expect(variables).not.toHaveProperty('SUAS_EMAIL_FROM');
+      expect(variables).not.toHaveProperty('RESEND_API_KEY');
+      if (fn.Properties?.Handler !== 'email-relay.handler') {
+        expect(variables).not.toHaveProperty('SUAS_EMAIL_FROM');
+      }
     }
   });
 });
@@ -562,7 +639,7 @@ describe('DNS and email', () => {
     s.dns.hasOutput('NameServers', Match.anyValue());
   });
 
-  it('has no SES identity (R11.2 sends through Gmail)', () => {
+  it('has no SES identity (suas #305 sends through Resend)', () => {
     s.dns.resourceCountIs('AWS::SES::EmailIdentity', 0);
   });
 

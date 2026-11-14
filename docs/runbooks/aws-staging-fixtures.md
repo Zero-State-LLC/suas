@@ -36,8 +36,8 @@ mailbox stored in `/suas/staging/fixture-mailbox`:
   tag is 1-32 of `a-z`, `0-9`, `-`.
 - Pick one tag per fixture and say what it is for, for example `vet1`, `vet2`, `helper1`. Each tag is a separate
   SUAS user; two fixtures cannot share one address.
-- Gmail delivers every plus address to the mailbox, so all fixture codes arrive in the owner's inbox, addressed
-  to the tagged form. Sign in on the web app with the tagged address and read the code there.
+- A mailbox that supports plus addressing delivers every plus address to it, so all fixture codes arrive in the
+  owner's inbox, addressed to the tagged form. Sign in on the web app with the tagged address and read the code there.
 - The bare mailbox is never accepted, so the owner's own address is never a fixture user.
 - Keep the mailbox out of the repository: it lives only in SSM (and, after deploy, in the Lambda configuration).
 
@@ -77,5 +77,5 @@ Synthetic addresses still work for fixtures that never need to sign in.
 
 ## Note
 
-Plus-addressed codes need the STAGING email provider (R11.2, Gmail SMTP) to be configured; with email disabled no
-code is sent to any address.
+Plus-addressed codes need the STAGING email provider (Resend through the email relay, suas #305) to be
+configured; with email disabled no code is sent to any address.
