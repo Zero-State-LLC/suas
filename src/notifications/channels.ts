@@ -19,6 +19,7 @@
 import type { CommunicationMode, SuasConfig } from '../config/index.js';
 import { createGmailSmtpEmailChannel, type GmailSmtpEmailLogRecord } from './gmail-smtp-email.js';
 import { createResendEmailChannel, type ResendEmailLogRecord } from './resend-email.js';
+import { stagingRecipientAllowed } from './staging-recipients.js';
 
 export const NOTIFICATION_CHANNELS = ['EMAIL', 'SMS', 'IN_APP'] as const;
 export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
@@ -216,6 +217,7 @@ export function createChannelRegistry(
       createResendEmailChannel({
         apiKey: config.notifications.resendApiKey,
         fromAddress: config.notifications.emailFrom,
+        allowRecipient: stagingRecipientAllowed(config.stagingFixtureMailbox),
         logger: logEmailSend,
       }),
     );

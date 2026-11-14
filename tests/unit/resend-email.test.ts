@@ -23,6 +23,7 @@ import {
   ResendEmailChannel,
   type ResendEmailLogRecord,
 } from '../../src/notifications/index.js';
+import { stagingRecipientAllowed } from '../../src/notifications/staging-recipients.js';
 import { validEnv } from '../helpers/env.js';
 
 const FROM = 'sender@example.invalid';
@@ -256,6 +257,75 @@ describe('ResendEmailChannel', () => {
       message({ idempotencyKey: 'k'.repeat(RESEND_IDEMPOTENCY_KEY_MAX_LENGTH + 1) }),
     );
     expect(result.accepted).toBe(false);
+    expect(transport.calls).toHaveLength(0);
+  });
+
+  // suas #305 / NOTIFICATIONS.md §5: a refusal a retry cannot fix settles now.
+  it('settles a 4xx refusal as not retryable, and retries 409, 429, 5xx and timeouts', async () => {
+    const statusOf = async (status: number) =>
+      emailChannel(
+        new ScriptedTransport([
+          Response.json({ name: 'refused', message: 'synthetic' }, { status }),
+        ]),
+      ).send(message());
+    for (const status of [400, 401, 403, 422]) {
+      expect(await statusOf(status), String(status)).toEqual({
+        accepted: false,
+        retryable: false,
+        failureReason: 'not_accepted',
+      });
+    }
+    for (const status of [409, 429, 500, 503]) {
+      expect((await statusOf(status)).retryable, String(status)).toBeUndefined();
+    }
+  });
+});
+
+// #306 / suas #305: the STAGING last-hop allowlist runs before any call to Resend.
+describe('ResendEmailChannel recipient allowlist', () => {
+  // Routable addresses are built at run time (repository hygiene, TESTING.md §12).
+  const at = (local: string, domain: string) => [local, domain].join('@');
+  const MAILBOX = at('fixture.owner', 'gmail.com');
+  const channelFor = (transport: FetchTransport, logs: ResendEmailLogRecord[] = []) =>
+    createResendEmailChannel({
+      apiKey: API_KEY,
+      fromAddress: FROM,
+      transport,
+      allowRecipient: stagingRecipientAllowed(MAILBOX),
+      logger: (record) => logs.push(record),
+    });
+
+  it('refuses an off-list address before any network call, for good', async () => {
+    const logs: ResendEmailLogRecord[] = [];
+    const transport = new ScriptedTransport([]);
+    const friend = at('friend', 'gmail.com');
+    for (const destination of [friend, MAILBOX]) {
+      expect(await channelFor(transport, logs).send(message({ destination }))).toEqual({
+        accepted: false,
+        retryable: false,
+        failureReason: 'recipient_not_allowed',
+      });
+    }
+    expect(transport.calls).toHaveLength(0);
+    expect(JSON.stringify(logs)).not.toContain(friend);
+    expect(logs[0]?.outcome).toBe('recipient_not_allowed');
+  });
+
+  it('sends to a +tag address of the fixture mailbox', async () => {
+    const transport = new ScriptedTransport([Response.json({ id: 'resend-id' })]);
+    const result = await channelFor(transport).send(
+      message({ destination: at('fixture.owner+inv-2', 'gmail.com') }),
+    );
+    expect(result.accepted).toBe(true);
+    expect(transport.calls).toHaveLength(1);
+  });
+
+  it('fails closed without an allowlist: only synthetic addresses pass', async () => {
+    const transport = new ScriptedTransport([]);
+    const result = await emailChannel(transport).send(
+      message({ destination: at('owner+suas-1', 'gmail.com') }),
+    );
+    expect(result.failureReason).toBe('recipient_not_allowed');
     expect(transport.calls).toHaveLength(0);
   });
 });

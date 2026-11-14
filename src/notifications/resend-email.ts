@@ -14,16 +14,20 @@
  *
  * Official send API: HTTPS POST https://api.resend.com/emails
  * `createChannelRegistry` constructs this adapter only for the released mode.
+ *
+ * Failure mapping (suas #305): a 4xx other than 409 or 429 is a refusal a retry cannot fix,
+ * so it settles now; 409, 429, 5xx and timeouts stay retryable with the same Idempotency-Key.
  */
 
 import { fetchWithTimeout } from '../resilience/outbound-fetch.js';
 import type { NotificationChannelPort, OutboundMessage, SendAcknowledgement } from './channels.js';
+import { stagingRecipientAllowed, type RecipientAllowed } from './staging-recipients.js';
 
 export const RESEND_EMAILS_URL = 'https://api.resend.com/emails';
 export const RESEND_IDEMPOTENCY_KEY_MAX_LENGTH = 256;
 export const RESEND_IMPLEMENTATION = 'resend' as const;
 
-export type ResendSendOutcome = 'accepted' | 'not_accepted' | 'timeout';
+export type ResendSendOutcome = 'accepted' | 'not_accepted' | 'timeout' | 'recipient_not_allowed';
 
 /** Structured send log. Never includes Authorization, API keys, or bodies. */
 export interface ResendEmailLogRecord {
@@ -50,6 +54,8 @@ export interface ResendEmailChannelOptions {
   readonly fromAddress: string;
   readonly transport?: FetchTransport;
   readonly logger?: ResendEmailLogger;
+  /** The STAGING last-hop allowlist (#306). Absent fails closed: only synthetic addresses. */
+  readonly allowRecipient?: RecipientAllowed;
 }
 
 export class ResendEmailMisconfiguredError extends Error {
@@ -75,20 +81,15 @@ function requireConfigured(value: string | undefined, label: string): string {
   return value;
 }
 
-export function createResendEmailChannel(options: {
-  readonly apiKey: string | undefined;
-  readonly fromAddress: string | undefined;
-  readonly transport?: FetchTransport;
-  readonly logger?: ResendEmailLogger;
-}): ResendEmailChannel {
+export function createResendEmailChannel(
+  options: Omit<ResendEmailChannelOptions, 'apiKey' | 'fromAddress'> & {
+    readonly apiKey: string | undefined;
+    readonly fromAddress: string | undefined;
+  },
+): ResendEmailChannel {
   const apiKey = requireConfigured(options.apiKey, 'RESEND_API_KEY');
   const fromAddress = requireConfigured(options.fromAddress, 'SUAS_EMAIL_FROM');
-  return new ResendEmailChannel({
-    apiKey,
-    fromAddress,
-    ...(options.transport !== undefined ? { transport: options.transport } : {}),
-    ...(options.logger !== undefined ? { logger: options.logger } : {}),
-  });
+  return new ResendEmailChannel({ ...options, apiKey, fromAddress });
 }
 
 /**
@@ -104,12 +105,14 @@ export class ResendEmailChannel implements NotificationChannelPort {
   private readonly fromAddress: string;
   private readonly transport: FetchTransport;
   private readonly logger: ResendEmailLogger | undefined;
+  private readonly allowRecipient: RecipientAllowed;
 
   constructor(options: ResendEmailChannelOptions) {
     this.apiKey = options.apiKey;
     this.fromAddress = options.fromAddress;
     this.transport = options.transport ?? defaultTransport;
     this.logger = options.logger;
+    this.allowRecipient = options.allowRecipient ?? stagingRecipientAllowed(undefined);
   }
 
   async send(message: OutboundMessage): Promise<SendAcknowledgement> {
@@ -129,6 +132,10 @@ export class ResendEmailChannel implements NotificationChannelPort {
       message.html.trim() === ''
     ) {
       return this.finish('not_accepted');
+    }
+    // Before any call to Resend: an address off the list settles as not delivered, for good.
+    if (!this.allowRecipient(message.destination)) {
+      return this.finish('recipient_not_allowed', false);
     }
 
     try {
@@ -150,7 +157,7 @@ export class ResendEmailChannel implements NotificationChannelPort {
 
       const payload: unknown = await readJsonBody(response);
       if (hasProviderError(payload) || !response.ok) {
-        return this.finish('not_accepted');
+        return this.finish('not_accepted', !isPermanentRefusal(response.status));
       }
 
       const providerReference = providerId(payload);
@@ -165,9 +172,12 @@ export class ResendEmailChannel implements NotificationChannelPort {
     }
   }
 
-  private finish(outcome: Exclude<ResendSendOutcome, 'accepted'>): SendAcknowledgement {
+  private finish(
+    outcome: Exclude<ResendSendOutcome, 'accepted'>,
+    retryable = true,
+  ): SendAcknowledgement {
     this.emit(outcome);
-    return { accepted: false, failureReason: outcome };
+    return { accepted: false, ...(retryable ? {} : { retryable: false }), failureReason: outcome };
   }
 
   private emit(outcome: ResendSendOutcome): void {
@@ -203,6 +213,11 @@ function providerId(payload: unknown): string | undefined {
     if (typeof id === 'string' && id.length > 0) return id;
   }
   return undefined;
+}
+
+/** 409 (idempotent request in flight) and 429 (rate limit) clear on their own. */
+function isPermanentRefusal(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 409 && status !== 429;
 }
 
 function isTimeoutError(error: unknown): boolean {
