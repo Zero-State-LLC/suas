@@ -325,7 +325,12 @@ export function useWrapUpCase(caseId: string) {
       keys.renew('activate');
       keys.renew(JSON.stringify(settlement));
     },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.cases.detail(caseId) }),
+    // A refusal (stale state, a request still open) means the case moved, so re-read both.
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.cases.detail(caseId) }),
+        queryClient.invalidateQueries({ queryKey: caseKeys.serviceRequests.all }),
+      ]),
   });
 }
 
