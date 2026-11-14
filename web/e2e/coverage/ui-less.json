@@ -8,7 +8,7 @@
     "ref": "suas-specs #81 decisions.md Q1; R12.5"
   },
   "getImmediateResources": {
-    "reason": "The web app shows the compiled SAFETY_COPY crisis text (SURFACES §6 fallback); only legacy /app reads this slot.",
+    "reason": "The web app shows the compiled SAFETY_COPY crisis text (SURFACES \u00a76 fallback); only legacy /app reads this slot.",
     "ref": "R12.5; plan O3(a)"
   },
   "putNotificationPreferences": {
@@ -35,64 +35,48 @@
     "reason": "Creating a request reuses the case server-side; the web app never opens a case itself.",
     "ref": "R12.5; R8.3 Option A (V1_MVP_PROPOSAL.md:181)"
   },
-  "getCase": {
-    "reason": "The web app reads case_id off the service request and never reads the case.",
-    "ref": "R12.5; R8.3 Option A (V1_MVP_PROPOSAL.md:181)"
-  },
   "createCaseServiceRequest": {
     "reason": "The helper 'add a need' action was dropped; requests are created by the Veteran.",
     "ref": "R12.5; R8.3 Option A (V1_MVP_PROPOSAL.md:181,229)"
   },
   "listCaseFollowUps": {
-    "reason": "Responder-era follow-ups; no v1 web surface until R11.1 is released.",
-    "ref": "R12.5; plan O7(a)"
+    "reason": "Follow-Ups are outside R11.1: FOLLOWUP.md is draft and its v1 USER responsible type is not released, so the v1 web has no Follow-Up surface.",
+    "ref": "suas-specs v0.10.0 FOLLOWUP.md \u00a73 (draft), R11.1; R13.2 (proposal)"
   },
   "createFollowUp": {
-    "reason": "Responder-era follow-ups; no v1 web surface until R11.1 is released.",
-    "ref": "R12.5; plan O7(a)"
+    "reason": "Follow-Ups are outside R11.1: FOLLOWUP.md is draft and its v1 USER responsible type is not released, so the v1 web has no Follow-Up surface.",
+    "ref": "suas-specs v0.10.0 FOLLOWUP.md \u00a73 (draft), R11.1; R13.2 (proposal)"
   },
   "completeFollowUp": {
-    "reason": "Responder-era follow-ups; no v1 web surface until R11.1 is released.",
-    "ref": "R12.5; plan O7(a)"
-  },
-  "resolveCaseWithSettlement": {
-    "reason": "Responder-era settlements; no v1 web surface until R11.1 is released.",
-    "ref": "R12.5; plan O7(a)"
+    "reason": "Follow-Ups are outside R11.1: FOLLOWUP.md is draft and its v1 USER responsible type is not released, so the v1 web has no Follow-Up surface.",
+    "ref": "suas-specs v0.10.0 FOLLOWUP.md \u00a73 (draft), R11.1; R13.2 (proposal)"
   },
   "listCaseSettlements": {
-    "reason": "Responder-era settlements; no v1 web surface until R11.1 is released.",
-    "ref": "R12.5; plan O7(a)"
+    "reason": "The resolve response returns the Settlement; CASES.md \u00a78.1 allows a Veteran view but does not require one, and no v1 screen shows past Settlements.",
+    "ref": "suas-specs v0.10.0 API.md \u00a79, CASES.md \u00a78.1; R13.2 (proposal)"
   },
   "getCaseSettlement": {
-    "reason": "Responder-era settlements; no v1 web surface until R11.1 is released.",
-    "ref": "R12.5; plan O7(a)"
+    "reason": "The resolve response returns the Settlement; CASES.md \u00a78.1 allows a Veteran view but does not require one, and no v1 screen shows past Settlements.",
+    "ref": "suas-specs v0.10.0 API.md \u00a79, CASES.md \u00a78.1; R13.2 (proposal)"
   },
   "triageCase": {
     "reason": "SUAS-admin case command; the admin cannot read or list cases in v1, so there is no admin case screen.",
-    "ref": "R12.5; plan O4(a), O7(a)"
-  },
-  "activateCase": {
-    "reason": "Responder-era case command; organizations are removed in v1 (V1_PROJECT_PLAN.md §2.1).",
-    "ref": "R12.5; plan O7(a)"
+    "ref": "suas-specs v0.10.0 CASES.md \u00a78; R12.5; plan O4(a); R13.2 (proposal)"
   },
   "moveCaseToFollowup": {
-    "reason": "Responder-era case command; organizations are removed in v1 (V1_PROJECT_PLAN.md §2.1).",
-    "ref": "R12.5; plan O7(a)"
+    "reason": "R11.1 grants the move, but it needs a Follow-Up or a documented reason and Follow-Ups are outside R11.1; the web resolves from ACTIVE.",
+    "ref": "suas-specs v0.10.0 CASES.md \u00a74, FOLLOWUP.md \u00a73 (draft), R11.1; R13.2 (proposal)"
   },
   "resumeCaseActive": {
-    "reason": "Responder-era case command; organizations are removed in v1 (V1_PROJECT_PLAN.md §2.1).",
-    "ref": "R12.5; plan O7(a)"
+    "reason": "The web never moves a Case to FOLLOWUP, so there is nothing to resume; D-046 (not released) would remove the command.",
+    "ref": "suas-specs v0.10.0 CASES.md \u00a74, R11.1, D-046 (unreleased); R13.2 (proposal)"
   },
   "escalateCase": {
-    "reason": "Responder-era case command; organizations are removed in v1 (V1_PROJECT_PLAN.md §2.1).",
-    "ref": "R12.5; plan O7(a)"
-  },
-  "closeCase": {
-    "reason": "Responder-era / SUAS-admin case command; the admin cannot read or list cases in v1.",
-    "ref": "R12.5; plan O4(a), O7(a)"
+    "reason": "No escalation reader in v1: there is no admin Case list or read and no RED queue, so the button would promise a review nobody performs.",
+    "ref": "suas-specs v0.10.0 CASES.md \u00a74.3, \u00a78, SAFETY.md \u00a73.2; R13.2 (proposal)"
   },
   "reopenCase": {
     "reason": "SUAS-admin case command; the admin cannot read or list cases in v1, so there is no admin case screen.",
-    "ref": "R12.5; plan O4(a), O7(a)"
+    "ref": "suas-specs v0.10.0 CASES.md \u00a78, D-046 (unreleased); R12.5; plan O4(a); R13.2 (proposal)"
   }
 }

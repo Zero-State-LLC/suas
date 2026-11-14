@@ -168,6 +168,24 @@ async function expectNoStanding(who: Person, caseId: string) {
   }
 }
 
+describe('a requester is not a holder', () => {
+  it('refuses the requester the holder-only resolve and close with 403', async () => {
+    const tenantId = randomUUID();
+    const requester = await person(tenantId, 'requester', true);
+    const helper = await person(tenantId, 'helper');
+    const { caseId, requestId } = await submitRequest(requester);
+    expect((await accept(helper, requestId)).statusCode).toBe(200);
+
+    for (const [url, payload] of holderWrites(caseId).filter(([path]) =>
+      /\/commands\/(resolve|close)$/.test(path),
+    )) {
+      const refused = await post(requester, url, payload);
+      expect(refused.statusCode, url).toBe(403);
+      expect(refused.json().error.code, url).toBe('FORBIDDEN');
+    }
+  });
+});
+
 describe('holder standing ends with the case cycle', () => {
   it('gives a former holder 404 on the case and its sub-resources after CLOSE', async () => {
     const tenantId = randomUUID();
