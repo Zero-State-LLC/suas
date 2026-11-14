@@ -329,6 +329,7 @@ test.describe.serial('licence fallback', () => {
     await veteranSendsLicence(browser, request, 'licence-recuse');
     const first = await adminOnQueue(browser, request, FIRST_ADMIN);
     const reviews = first.getByRole('link', { name: /^Licence review, sent / });
+    await expect(reviews.last()).toBeVisible();
     const before = await reviews.count();
     await openNewest(first);
     await first.getByRole('button', { name: 'Step back from this review' }).click();
