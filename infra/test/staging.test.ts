@@ -434,6 +434,61 @@ describe('email relay', () => {
     }
   });
 
+  // suas #313 review: no Function URL and no resource policy, in any stack. The only way in is
+  // an identity-policy invoke on the API or job-worker role, scoped to the relay's ARN.
+  it('has no Function URL or Lambda::Permission; only the API and worker roles may invoke it', () => {
+    const [relayId] = relay();
+    const all = [s.dns, s.webCert, s.backend, s.web].flatMap((t) => Object.values(resourcesOf(t)));
+    expect(all.filter((r) => r.Type === 'AWS::Lambda::Url')).toEqual([]);
+    expect(
+      all.filter(
+        (r) => r.Type === 'AWS::Lambda::Permission' && /EmailRelay/.test(JSON.stringify(r)),
+      ),
+    ).toEqual([]);
+
+    // Every Allow statement, from attached, managed and inline policies, that could invoke it.
+    const documents = all.flatMap((r) => {
+      const roles = JSON.stringify(r.Properties?.Roles ?? null);
+      if (r.Type === 'AWS::IAM::Policy' || r.Type === 'AWS::IAM::ManagedPolicy') {
+        return [{ roles, statements: r.Properties?.PolicyDocument.Statement ?? [] }];
+      }
+      if (r.Type === 'AWS::IAM::Role') {
+        return (r.Properties?.Policies ?? []).map((p: { PolicyDocument: any }) => ({
+          roles: 'inline',
+          statements: p.PolicyDocument.Statement,
+        }));
+      }
+      return [];
+    });
+    const coversInvoke = (a: string): boolean => a === '*' || /^lambda:(\*|Invoke)/.test(a);
+    const coversRelay = (resource: unknown): boolean =>
+      typeof resource === 'string'
+        ? resource.includes('*')
+        : /EmailRelay/.test(JSON.stringify(resource));
+    const grants = documents.flatMap(({ roles, statements }) =>
+      (statements as Array<Record<string, any>>)
+        .filter(
+          (st) =>
+            st.Effect === 'Allow' &&
+            [st.Action].flat().some(coversInvoke) &&
+            [st.Resource].flat().some(coversRelay),
+        )
+        .map((st) => ({ roles, action: st.Action, resource: st.Resource })),
+    );
+    const relayArn = { 'Fn::GetAtt': [relayId, 'Arn'] };
+    const scoped = {
+      action: 'lambda:InvokeFunction',
+      resource: [relayArn, { 'Fn::Join': ['', [relayArn, ':*']] }],
+    };
+    const byRoles = (a: { roles: string }, b: { roles: string }) => a.roles.localeCompare(b.roles);
+    expect(grants.sort(byRoles)).toEqual(
+      [
+        { roles: JSON.stringify([{ Ref: roleOf('run.sh') }]), ...scoped },
+        { roles: JSON.stringify([{ Ref: roleOf('job-worker.handler') }]), ...scoped },
+      ].sort(byRoles),
+    );
+  });
+
   it('keeps the Resend key out of every function environment, and the sender on the relay only', () => {
     for (const [, fn] of ofType(s.backend, 'AWS::Lambda::Function')) {
       const variables = (fn.Properties?.Environment?.Variables ?? {}) as Record<string, unknown>;
