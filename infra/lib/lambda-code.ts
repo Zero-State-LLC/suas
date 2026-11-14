@@ -27,7 +27,7 @@ export const ENTRY_POINTS = {
   websocket: 'src/aws/websocket-lambda.ts',
   'job-worker': 'src/aws/job-worker-lambda.ts',
   migrate: 'src/aws/migrate-lambda.ts',
-  'smtp-relay': 'src/aws/smtp-relay-lambda.ts',
+  'email-relay': 'src/aws/email-relay-lambda.ts',
 } as const;
 
 export const RDS_CA_BUNDLE_FILE = 'rds-global-bundle.crt';

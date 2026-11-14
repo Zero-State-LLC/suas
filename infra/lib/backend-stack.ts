@@ -1,6 +1,6 @@
 /**
  * The STAGING backend (synthetic data only): network, database, the API, the scheduled
- * job worker, the migrate function, the SMTP relay, and the assets bucket. Inference stays disabled
+ * job worker, the migrate function, the email relay, and the assets bucket. Inference stays disabled
  * (R2.15 is not approved) and chat push stays off (R6.12 is not accepted). The Bedrock
  * and API Gateway push adapters remain in src/ and are not selected here.
  *
@@ -37,7 +37,7 @@ import type { Construct } from 'constructs';
 import { RELEASE_MANIFEST, SPEC_VERSION } from '../../src/release/pins.js';
 import { REGION, type EnvironmentConfig } from './config.js';
 import { RDS_CA_BUNDLE_FILE, suasLambdaCode } from './lambda-code.js';
-import { SmtpRelay } from './smtp-relay.js';
+import { EmailRelay } from './email-relay.js';
 
 export interface BackendStackProps extends StackProps {
   readonly config: EnvironmentConfig;
@@ -60,7 +60,7 @@ const FINGERPRINT_KEY_ID = 'staging-1';
 
 type Env = Record<string, string>;
 
-/** SSM parameter `/suas/<environment>/<name>` (fixture-registry, fixture-mailbox). */
+/** SSM parameter `/suas/<environment>/<name>` (fixture-registry, fixture-mailbox, email-from). */
 export function fixtureParameterName(environment: string, name: string): string {
   return `/suas/${environment}/${name}`;
 }
@@ -129,7 +129,7 @@ export class BackendStack extends Stack {
 
     vpc.addGatewayEndpoint('S3Endpoint', { service: ec2.GatewayVpcEndpointAwsService.S3 });
     // One interface endpoint per AWS service the code calls (see README for the source files).
-    // Lambda only, to invoke the SMTP relay (R11.2). Bedrock Runtime and execute-api are not
+    // Lambda only, to invoke the email relay (suas #305). Bedrock Runtime and execute-api are not
     // endpoints while inference and chat push stay off.
     const interfaceEndpoints: ReadonlyArray<readonly [string, ec2.InterfaceVpcEndpointAwsService]> =
       [['LambdaEndpoint', ec2.InterfaceVpcEndpointAwsService.LAMBDA]];
@@ -245,9 +245,9 @@ export class BackendStack extends Stack {
     // -------------------------------------------------------------------- api
     const code = suasLambdaCode();
 
-    // R11.5 (D-052): the tenant-id:user-id pairs STAGING admits, and R11.7: the mailbox whose
-    // plus addresses may be fixture addresses. The operator creates both String parameters
-    // before the first deploy (infra/README.md). CloudFormation resolves them at each deploy,
+    // R11.5 (D-052): the tenant-id:user-id pairs STAGING admits, R11.7: the mailbox whose
+    // plus addresses may be fixture addresses, and suas #305: the Resend sender. The operator
+    // creates these String parameters before the first deploy (infra/README.md). CloudFormation resolves them at each deploy,
     // so no function reads SSM at run time and none gets an SSM grant.
     const fixtureParameter = (name: string): string =>
       ssm.StringParameter.valueForStringParameter(this, fixtureParameterName(config.name, name));
@@ -337,15 +337,16 @@ export class BackendStack extends Stack {
       });
     };
 
-    // R11.2: Gmail SMTP from outside the VPC. The API and worker hand it rendered messages.
-    const smtpRelay = new SmtpRelay(this, 'SmtpRelay', {
+    // suas #305: Resend from outside the VPC. The API and worker hand it rendered messages.
+    const emailRelay = new EmailRelay(this, 'EmailRelay', {
       code,
       logRetention: LOG_RETENTION,
+      fromAddress: fixtureParameter('email-from'),
       fixtureMailbox: fixtureParameter('fixture-mailbox'),
     });
-    const viaSmtpRelay: Env = {
-      SUAS_EMAIL_MODE: 'gmail_smtp',
-      SUAS_SMTP_RELAY_FUNCTION: smtpRelay.function.functionName,
+    const viaEmailRelay: Env = {
+      SUAS_EMAIL_MODE: 'resend',
+      SUAS_EMAIL_RELAY_FUNCTION: emailRelay.function.functionName,
     };
 
     const webAdapterLayer = lambda.LayerVersion.fromLayerVersionArn(
@@ -371,7 +372,7 @@ export class BackendStack extends Stack {
         // R11.3 (D-038): the v1 web client's origin, which calls this API with Bearer. A
         // non-empty allowlist makes the /app session cookie SameSite=None (src/http/routes/ui.ts).
         SUAS_CORS_ALLOWED_ORIGINS: `https://${config.webHostname}`,
-        ...viaSmtpRelay,
+        ...viaEmailRelay,
         // R2.15 is not approved. The Bedrock adapter is not selected.
         SUAS_MODEL_INFERENCE_MODE: 'disabled',
         SUAS_OBJECT_STORAGE_MODE: 's3',
@@ -397,7 +398,7 @@ export class BackendStack extends Stack {
       env: {
         ...baseEnv,
         ...viaProxy,
-        ...viaSmtpRelay,
+        ...viaEmailRelay,
         // The licence read job reads the images and deletes them when it settles a review.
         SUAS_OBJECT_STORAGE_MODE: 's3',
         SUAS_S3_BUCKET: assetsBucket.bucketName,
@@ -423,9 +424,9 @@ export class BackendStack extends Stack {
     });
 
     // ------------------------------------------------------- IAM (least privilege)
-    // Email: invoke the SMTP relay and nothing else. No bedrock:InvokeModel: inference is disabled.
-    smtpRelay.function.grantInvoke(apiFunction);
-    smtpRelay.function.grantInvoke(jobWorkerFunction);
+    // Email: invoke the email relay and nothing else. No bedrock:InvokeModel: inference is disabled.
+    emailRelay.function.grantInvoke(apiFunction);
+    emailRelay.function.grantInvoke(jobWorkerFunction);
     apiFunction.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
@@ -572,9 +573,9 @@ export class BackendStack extends Stack {
       value: migrateFunction.functionName,
     });
     new CfnOutput(this, 'DatabaseSecretName', { value: dbSecret.secretName });
-    new CfnOutput(this, 'SmtpCredentialsSecretName', {
-      description: 'Put the Gmail address and app password here by hand (see infra/README.md).',
-      value: smtpRelay.secret.secretName,
+    new CfnOutput(this, 'EmailRelaySecretName', {
+      description: 'Put the Resend API key here by hand (see infra/README.md).',
+      value: emailRelay.secret.secretName,
     });
   }
 }
