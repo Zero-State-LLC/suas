@@ -9,15 +9,13 @@
  *   statuses must not leak into product contracts)
  * - SUAS-specs ARCHITECTURE.md §11 (`EmailPort`, `SmsPort`)
  * - SUAS-specs ENVIRONMENT.md §3 (`SUAS_EMAIL_MODE` adds D-004 `resend`;
- *   `SUAS_SMS_MODE` remains `disabled|fake|sink`.) suas-specs #75 R11.2 (released
- *   in 0.10.0) adds `gmail_smtp` for v1 STAGING.
+ *   `SUAS_SMS_MODE` remains `disabled|fake|sink`.)
  *
  * IN_APP is internal and always available: it writes to SUAS's own store rather
  * than contacting a provider, so no vendor decision gates it.
  */
 
 import type { CommunicationMode, SuasConfig } from '../config/index.js';
-import { createGmailSmtpEmailChannel, type GmailSmtpEmailLogRecord } from './gmail-smtp-email.js';
 import { createLambdaRelayEmailChannel, type RelayEmailLogRecord } from './lambda-relay-sender.js';
 import { createResendEmailChannel, type ResendEmailLogRecord } from './resend-email.js';
 import { stagingRecipientAllowed } from './staging-recipients.js';
@@ -102,11 +100,8 @@ export interface SendAcknowledgement {
   readonly retryable?: boolean;
 }
 
-/**
- * Runtime mode on a port. `resend` and `gmail_smtp` are adapter identities. `resend`
- * is D-004's provider; `gmail_smtp` replaces it on v1 STAGING (suas-specs #75 R11.2).
- */
-export type ChannelRuntimeMode = CommunicationMode | 'internal' | 'resend' | 'gmail_smtp';
+/** Runtime mode on a port. `resend` is the adapter identity of D-004's provider. */
+export type ChannelRuntimeMode = CommunicationMode | 'internal' | 'resend';
 
 export interface NotificationChannelPort {
   readonly channel: NotificationChannel;
@@ -176,9 +171,7 @@ export class InternalChannel implements NotificationChannelPort {
 }
 
 /** Content-free email outcome log (implementation, accepted, outcome); NOTIFICATIONS.md §5, §10. */
-function logEmailSend(
-  record: ResendEmailLogRecord | RelayEmailLogRecord | GmailSmtpEmailLogRecord,
-): void {
+function logEmailSend(record: ResendEmailLogRecord | RelayEmailLogRecord): void {
   console.log(JSON.stringify({ msg: 'email_send', ...record }));
 }
 
@@ -204,9 +197,8 @@ export class FailingChannel implements NotificationChannelPort {
  * port at all, so the caller reports the channel unavailable instead of faking a
  * send. IN_APP is internal and always present.
  *
- * D-004 selects Resend as the external EMAIL provider; R11.2 (released in 0.10.0) added
- * `gmail_smtp` for v1 STAGING. Fake and sink stay recording-only; `resend` and `gmail_smtp`
- * construct their adapters with validated configuration. `resend` sends through the
+ * D-004 selects Resend as the external EMAIL provider. Fake and sink stay recording-only;
+ * `resend` constructs its adapter with validated configuration, and sends through the
  * outside-VPC relay function when one is configured (suas #305; STAGING config requires it),
  * else directly. Both check the STAGING recipient allowlist first.
  */
@@ -233,16 +225,6 @@ export function createChannelRegistry(
             allowRecipient,
             logger: logEmailSend,
           }),
-    );
-  } else if (config.notifications.email === 'gmail_smtp') {
-    registry.set(
-      'EMAIL',
-      createGmailSmtpEmailChannel({
-        user: config.notifications.smtp.user,
-        appPassword: config.notifications.smtp.appPassword,
-        fixtureMailbox: config.stagingFixtureMailbox,
-        logger: logEmailSend,
-      }),
     );
   } else if (config.notifications.email !== 'disabled') {
     registry.set('EMAIL', new RecordingChannel('EMAIL', config.notifications.email));
