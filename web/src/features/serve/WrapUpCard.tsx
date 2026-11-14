@@ -14,7 +14,7 @@ import {
   useWrapUpCase,
   type SettlementText,
 } from './api';
-import { allRequestsFinal, commandErrorMessage } from './case-logic';
+import { CASE_TEXT_MAX, allRequestsFinal, commandErrorMessage } from './case-logic';
 
 /**
  * R11.1, R13.1 (proposal): a holder wraps up an ASSIGNED or ACTIVE Case once every request of
@@ -105,6 +105,7 @@ function SettlementForm({ caseId, status }: { caseId: string; status: 'ASSIGNED'
           label={field.label}
           rows={2}
           required
+          maxLength={CASE_TEXT_MAX}
           value={text[field.name]}
           onChange={(event) => {
             setText({ ...text, [field.name]: event.target.value });

@@ -356,6 +356,20 @@ describe('Wrap up', () => {
     expect(wrapUp()).toBeNull();
   });
 
+  it('stays hidden while a second page of requests may hold one that is not final', async () => {
+    replies.caseRequests = {
+      data: { ...caseRequests('CLOSED', 'CANCELLED').data, next_cursor: 'page-2' },
+    };
+    await settledList('Cancelled');
+    expect(wrapUp()).toBeNull();
+  });
+
+  it('stays hidden while a request is DECLINED, because it can still be rematched', async () => {
+    replies.caseRequests = caseRequests('CLOSED', 'DECLINED');
+    await settledList('Declined');
+    expect(wrapUp()).toBeNull();
+  });
+
   it('is not shown to someone who does not hold a request here', async () => {
     replies.detail = { data: { ...detail('CLOSED'), viewer_role: 'REQUESTER' } };
     await settledList('Cancelled');
@@ -401,6 +415,31 @@ describe('Wrap up', () => {
       headers: key,
     });
     expect(keyOf(1)).not.toBe(keyOf(0));
+  });
+
+  it('caps each settlement field at the 2000 characters the case commands allow', async () => {
+    renderCase();
+    const card = await screen.findByRole('region', { name: 'Wrap up this case' });
+    for (const label of [
+      /What they asked for/,
+      /What happened/,
+      /What was done/,
+      /Anything still open/,
+    ]) {
+      expect(within(card).getByRole('textbox', { name: label })).toHaveAttribute(
+        'maxlength',
+        '2000',
+      );
+    }
+  });
+
+  it('tells a person who is not on this case that only a helper who accepted can wrap it up', async () => {
+    client.POST.mockRejectedValue(new ApiError(403, 'FORBIDDEN', 'No.'));
+    renderCase();
+    await fillAndSubmit();
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Only a helper who accepted a request on this case can do that.',
+    );
   });
 
   it('resolves an ACTIVE case without activating it again', async () => {

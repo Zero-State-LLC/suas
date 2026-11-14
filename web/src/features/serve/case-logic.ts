@@ -114,6 +114,12 @@ export function allRequestsFinal(statuses: readonly ServiceRequestStatus[]): boo
 /** Matches `reason` max(512) in src/http/routes/service-requests.ts. */
 export const RELEASE_REASON_MAX = 512;
 
+/**
+ * Matches the 2000-character `reason` and contact-log `note` limits on the case routes
+ * (src/http/routes/cases.ts, contact-attempts). Settlement text has no documented limit of its own.
+ */
+export const CASE_TEXT_MAX = 2000;
+
 /** Plain-word status for the chips and the progress line. */
 export function statusLabel(status: ServiceRequestStatus): string {
   switch (status) {
@@ -182,7 +188,7 @@ export function commandErrorMessage(error: unknown): string {
     return "That step isn't available right now. We refreshed the request.";
   }
   if (isApiError(error) && error.status === 403) {
-    return 'Only the person who took this request can do that.';
+    return 'Only a helper who accepted a request on this case can do that.';
   }
   return 'That did not go through. Try again.';
 }
