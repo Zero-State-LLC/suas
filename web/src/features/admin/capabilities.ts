@@ -85,8 +85,7 @@ export function capabilityRows(capabilities: Capabilities): CapabilityRow[] {
 
 /**
  * Whether a real email mode has what it needs to send, by the build-info flags. `resend`
- * sends through its relay (suas #305), or directly with its key and sender. `gmail_smtp`
- * sends through its relay, or directly with the Gmail address and app password (R11.2).
+ * sends through its relay (suas #305), or directly with its key and sender.
  */
 function emailReady(mode: string, capabilities: Capabilities): boolean {
   if (mode === 'resend') {
@@ -94,13 +93,6 @@ function emailReady(mode: string, capabilities: Capabilities): boolean {
       capabilities.email_relay_configured === true ||
       (capabilities.resend_api_key_configured === true &&
         capabilities.email_from_configured === true)
-    );
-  }
-  if (mode === 'gmail_smtp') {
-    return (
-      capabilities.smtp_relay_configured === true ||
-      (capabilities.smtp_user_configured === true &&
-        capabilities.smtp_app_password_configured === true)
     );
   }
   return false;
