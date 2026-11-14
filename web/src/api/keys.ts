@@ -27,6 +27,8 @@ export const queryKeys = {
   /** The person's licence review: GET /veterans/me/verification/licence (R10.1 proposal). */
   licence: ['licence'] as const,
   serviceRequests: resourceKeys('service-requests'),
+  /** Support Cases: GET /cases/{id} (the holder's Wrap up card reads the status). */
+  cases: resourceKeys('cases'),
   /** The live thread's messages; a named (closed) thread adds its id. */
   chatMessages: (serviceRequestId: string, threadId?: string) =>
     threadId === undefined

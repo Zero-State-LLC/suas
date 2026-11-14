@@ -98,6 +98,19 @@ export function canRelease(status: ServiceRequestStatus): boolean {
   return status === 'ACCEPTED';
 }
 
+/** TERMINAL_REQUEST_STATUSES in src/coordination/request-transitions.ts. */
+const FINAL_STATUSES: readonly ServiceRequestStatus[] = [
+  'CLOSED',
+  'CANCELLED',
+  'EXPIRED',
+  'UNFULFILLABLE',
+];
+
+/** The server resolves a Case only when it has requests and every one is final (CASES.md §7). */
+export function allRequestsFinal(statuses: readonly ServiceRequestStatus[]): boolean {
+  return statuses.length > 0 && statuses.every((status) => FINAL_STATUSES.includes(status));
+}
+
 /** Matches `reason` max(512) in src/http/routes/service-requests.ts. */
 export const RELEASE_REASON_MAX = 512;
 

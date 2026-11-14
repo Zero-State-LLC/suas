@@ -30,6 +30,7 @@ import {
 } from './case-logic';
 import { ContactLog } from './ContactLog';
 import { ReleaseDialog } from './ReleaseDialog';
+import { WrapUpCard } from './WrapUpCard';
 import { uniqueBy } from '../../lib/unique-by';
 
 export default function CasePage() {
@@ -141,6 +142,7 @@ function CaseView({
       <div className="grid items-start gap-6 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <div className="flex flex-col gap-5">
           <WhatsNeeded request={request} />
+          {request.viewer_role === 'ACCEPTER' ? <WrapUpCard caseId={request.case_id} /> : null}
           <ContactLog caseId={request.case_id} />
         </div>
         <aside className="flex flex-col gap-4">

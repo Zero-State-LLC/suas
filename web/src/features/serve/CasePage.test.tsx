@@ -29,7 +29,7 @@ const detail = (status = 'ACCEPTED') => ({
 });
 
 type Reply = { data: unknown } | Error;
-let replies: { detail: Reply; attempts: Reply };
+let replies: { detail: Reply; attempts: Reply; supportCase: Reply; caseRequests: Reply };
 
 function reply(value: Reply) {
   return value instanceof Error ? Promise.reject(value) : Promise.resolve(value);
@@ -61,11 +61,14 @@ beforeEach(() => {
   replies = {
     detail: { data: detail() },
     attempts: { data: { contact_attempts: [] } },
+    supportCase: { data: { case_id: 'c1', status: 'ASSIGNED', priority_signal_level: null } },
+    caseRequests: { data: { service_requests: [] } },
   };
   client.GET.mockImplementation((path: string) => {
     if (path === '/api/v0/service-requests/{id}') return reply(replies.detail);
     if (path === '/api/v0/cases/{caseId}/contact-attempts') return reply(replies.attempts);
-    return reply({ data: { service_requests: [] } });
+    if (path === '/api/v0/cases/{id}') return reply(replies.supportCase);
+    return reply(replies.caseRequests);
   });
 });
 
@@ -301,5 +304,128 @@ describe('Going to row', () => {
     renderCase();
     await screen.findByText('Where to meet');
     expect(screen.queryByText('Going to')).not.toBeInTheDocument();
+  });
+});
+
+describe('Wrap up', () => {
+  const caseRequests = (...statuses: string[]) => ({
+    data: {
+      service_requests: statuses.map((status, n) => ({
+        service_request_id: `r${String(n + 1)}`,
+        category: 'FOOD',
+        status,
+      })),
+      next_cursor: null,
+    },
+  });
+  const supportCase = (status: string) => ({
+    data: { case_id: 'c1', status, priority_signal_level: null },
+  });
+  const wrapUp = () => screen.queryByRole('region', { name: 'Wrap up this case' });
+
+  beforeEach(() => {
+    replies.detail = { data: { ...detail('CLOSED'), viewer_role: 'ACCEPTER' } };
+    replies.caseRequests = caseRequests('CLOSED', 'CANCELLED');
+  });
+
+  async function settledList(chip: string) {
+    renderCase();
+    const list = await screen.findByRole('region', { name: 'Service requests' });
+    await within(list).findByText(chip);
+  }
+
+  it('stays hidden while any request of the case is not final', async () => {
+    replies.caseRequests = caseRequests('CLOSED', 'IN_PROGRESS');
+    await settledList('In progress');
+    expect(wrapUp()).toBeNull();
+  });
+
+  it('shows once every request of the case is final', async () => {
+    renderCase();
+    expect(await screen.findByRole('region', { name: 'Wrap up this case' })).toBeInTheDocument();
+  });
+
+  it('is not shown to someone who does not hold a request here', async () => {
+    replies.detail = { data: { ...detail('CLOSED'), viewer_role: 'REQUESTER' } };
+    await settledList('Cancelled');
+    expect(wrapUp()).toBeNull();
+    expect(client.GET).not.toHaveBeenCalledWith('/api/v0/cases/{id}', expect.anything());
+  });
+
+  async function fillAndSubmit() {
+    const card = await screen.findByRole('region', { name: 'Wrap up this case' });
+    const fields: [RegExp, string][] = [
+      [/What was asked for/, 'A ride to the clinic'],
+      [/What happened/, 'Drove Marcus there and back'],
+      [/What was done/, 'The ride'],
+      [/Anything left/, 'Nothing'],
+    ];
+    for (const [label, text] of fields) {
+      await userEvent.type(within(card).getByRole('textbox', { name: label }), text);
+    }
+    await userEvent.click(within(card).getByRole('button', { name: 'Wrap up' }));
+  }
+
+  const resolveBody = {
+    requested: { text: 'A ride to the clinic' },
+    occurred: { text: 'Drove Marcus there and back' },
+    fulfilled: { text: 'The ride' },
+    unresolved: { text: 'Nothing' },
+  };
+
+  it('activates an ASSIGNED case, then resolves it with only the typed text', async () => {
+    client.POST.mockResolvedValue({ data: {} });
+    renderCase();
+    await fillAndSubmit();
+    await waitFor(() => expect(client.POST).toHaveBeenCalledTimes(2));
+    const key = { 'Idempotency-Key': expect.stringMatching(/^[0-9a-f-]{36}$/) as string };
+    expect(client.POST).toHaveBeenNthCalledWith(1, '/api/v0/cases/{id}/commands/activate', {
+      params: { path: { id: 'c1' } },
+      body: {},
+      headers: key,
+    });
+    expect(client.POST).toHaveBeenNthCalledWith(2, '/api/v0/cases/{id}/commands/resolve', {
+      params: { path: { id: 'c1' } },
+      body: resolveBody,
+      headers: key,
+    });
+  });
+
+  it('resolves an ACTIVE case without activating it again', async () => {
+    replies.supportCase = supportCase('ACTIVE');
+    client.POST.mockResolvedValue({ data: {} });
+    renderCase();
+    await fillAndSubmit();
+    await waitFor(() => expect(client.POST).toHaveBeenCalledTimes(1));
+    expect(client.POST).toHaveBeenCalledWith(
+      '/api/v0/cases/{id}/commands/resolve',
+      expect.objectContaining({ body: resolveBody }),
+    );
+  });
+
+  it('closes a resolved case only after the helper confirms, then goes to Serve', async () => {
+    replies.supportCase = supportCase('RESOLVED');
+    client.POST.mockResolvedValue({ data: {} });
+    renderCase();
+    await userEvent.click(await screen.findByRole('button', { name: 'Close case' }));
+    const dialog = screen.getByRole('dialog', { name: 'Close this case?' });
+    expect(dialog).toHaveTextContent(
+      'Closing ends the chat and access for every helper on this case.',
+    );
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(client.POST).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Close case' }));
+    await userEvent.click(
+      within(screen.getByRole('dialog', { name: 'Close this case?' })).getByRole('button', {
+        name: 'Close case',
+      }),
+    );
+    expect(await screen.findByText('serve board')).toBeInTheDocument();
+    expect(client.POST).toHaveBeenCalledTimes(1);
+    expect(client.POST).toHaveBeenCalledWith(
+      '/api/v0/cases/{id}/commands/close',
+      expect.objectContaining({ params: { path: { id: 'c1' } }, body: {} }),
+    );
   });
 });

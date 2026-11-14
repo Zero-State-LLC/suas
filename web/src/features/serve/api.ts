@@ -12,6 +12,7 @@ import { queryKeys, resourceKeys } from '../../api/keys';
 import { requireData } from '../../api/require-data';
 import { useSessionToken } from '../../api/token-store';
 import { latestAlerts } from './alerts';
+import type { Schemas } from '../../api/types';
 import type { ContactSave, NextStep } from './case-logic';
 
 /** Serve-only resources. They live here because the shared key file is not ours to edit. */
@@ -267,6 +268,92 @@ export function useReleaseRequest(serviceRequestId: string) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.serviceRequests.all, ...stale });
       void queryClient.invalidateQueries({ queryKey: caseKeys.serviceRequests.all, ...stale });
       void queryClient.invalidateQueries({ queryKey: queryKeys.chatThreads, ...stale });
+    },
+  });
+}
+
+/** GET /cases/{id}: the Case status the Wrap up card works from (owner or holder only). */
+export function useSupportCase(caseId: string) {
+  const token = useSessionToken();
+  return useQuery({
+    queryKey: queryKeys.cases.detail(caseId),
+    queryFn: async () => {
+      const { data } = await api.GET('/api/v0/cases/{id}', { params: { path: { id: caseId } } });
+      return requireData(data, 'case');
+    },
+    enabled: token !== null,
+  });
+}
+
+/** The four Settlement parts, each the helper's typed text and nothing else. */
+export type SettlementText = Record<'requested' | 'occurred' | 'fulfilled' | 'unresolved', string>;
+
+export interface WrapUp {
+  status: Schemas['CaseStatus'];
+  settlement: SettlementText;
+}
+
+/**
+ * Resolves the Case with a Settlement, activating an ASSIGNED Case first (RESOLVE needs ACTIVE).
+ * Both keys outlive a failure, so a retry replays a finished activate instead of a 409.
+ */
+export function useWrapUpCase(caseId: string) {
+  const queryClient = useQueryClient();
+  const keys = useKeyedIdempotency();
+  return useMutation({
+    mutationFn: async ({ status, settlement }: WrapUp) => {
+      const params = { path: { id: caseId } };
+      if (status === 'ASSIGNED') {
+        await api.POST('/api/v0/cases/{id}/commands/activate', {
+          params,
+          body: {},
+          headers: keys.headers('activate'),
+        });
+      }
+      await api.POST('/api/v0/cases/{id}/commands/resolve', {
+        params,
+        body: {
+          requested: { text: settlement.requested },
+          occurred: { text: settlement.occurred },
+          fulfilled: { text: settlement.fulfilled },
+          unresolved: { text: settlement.unresolved },
+        },
+        headers: keys.headers(JSON.stringify(settlement)),
+      });
+    },
+    onSuccess: (_data, { settlement }) => {
+      keys.renew('activate');
+      keys.renew(JSON.stringify(settlement));
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.cases.detail(caseId) }),
+  });
+}
+
+/** POST close on a RESOLVED Case. It ends every helper's standing here (CASES.md, R11.1). */
+export function useCloseCase(caseId: string) {
+  const queryClient = useQueryClient();
+  const keys = useKeyedIdempotency();
+  return useMutation({
+    mutationFn: async () => {
+      await api.POST('/api/v0/cases/{id}/commands/close', {
+        params: { path: { id: caseId } },
+        body: {},
+        headers: keys.headers('close'),
+      });
+    },
+    // As after a release: mark stale without re-reading, or the mounted case re-reads into a 404.
+    onSuccess: () => {
+      keys.renew('close');
+      const stale = { refetchType: 'none' } as const;
+      for (const queryKey of [
+        queryKeys.serviceRequests.all,
+        queryKeys.cases.all,
+        queryKeys.chatThreads,
+        caseKeys.serviceRequests.all,
+        caseKeys.contactAttempts.all,
+      ]) {
+        void queryClient.invalidateQueries({ queryKey, ...stale });
+      }
     },
   });
 }
