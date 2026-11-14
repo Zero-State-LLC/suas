@@ -17,6 +17,8 @@ import type { ContactSave, NextStep } from './case-logic';
 
 /** Serve-only resources. They live here because the shared key file is not ours to edit. */
 const caseKeys = {
+  /** GET /cases/{id}: the status the Wrap up card works from. */
+  cases: resourceKeys('cases'),
   contactAttempts: resourceKeys('case-contact-attempts'),
   serviceRequests: resourceKeys('case-service-requests'),
 };
@@ -276,7 +278,7 @@ export function useReleaseRequest(serviceRequestId: string) {
 export function useSupportCase(caseId: string) {
   const token = useSessionToken();
   return useQuery({
-    queryKey: queryKeys.cases.detail(caseId),
+    queryKey: caseKeys.cases.detail(caseId),
     queryFn: async () => {
       const { data } = await api.GET('/api/v0/cases/{id}', { params: { path: { id: caseId } } });
       return requireData(data, 'case');
@@ -328,7 +330,7 @@ export function useWrapUpCase(caseId: string) {
     // A refusal (stale state, a request still open) means the case moved, so re-read both.
     onSettled: () =>
       Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.cases.detail(caseId) }),
+        queryClient.invalidateQueries({ queryKey: caseKeys.cases.detail(caseId) }),
         queryClient.invalidateQueries({ queryKey: caseKeys.serviceRequests.all }),
       ]),
   });
@@ -352,7 +354,7 @@ export function useCloseCase(caseId: string) {
       const stale = { refetchType: 'none' } as const;
       for (const queryKey of [
         queryKeys.serviceRequests.all,
-        queryKeys.cases.all,
+        caseKeys.cases.all,
         queryKeys.chatThreads,
         caseKeys.serviceRequests.all,
         caseKeys.contactAttempts.all,
