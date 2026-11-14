@@ -209,9 +209,10 @@ export function useLicenceReviews() {
   });
 }
 
-export function useAdminLicenceReview(id: string) {
+export function useAdminLicenceReview(id: string, enabled = true) {
   return useQuery({
     queryKey: licenceKeys.detail(id),
+    enabled,
     queryFn: async () => {
       const { data } = await api.GET('/api/v0/admin/licence-reviews/{id}', {
         params: { path: { id } },
