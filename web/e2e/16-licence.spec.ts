@@ -321,9 +321,8 @@ test.describe.serial('licence fallback', () => {
     await expect(third.getByText(/^Declined: Other\./)).toBeVisible();
   });
 
-  // Fixme: after "Step back" the page re-reads the review it just left (GET
-  // /admin/licence-reviews/{id} answers 403), which the guard reports as a console error.
-  test.fixme('an admin steps back from a review and it leaves their queue', async ({
+  // The guard also proves the page does not re-read the review it left (that read answers 403).
+  test('an admin steps back from a review and it leaves their queue', async ({
     browser,
     request,
   }) => {
