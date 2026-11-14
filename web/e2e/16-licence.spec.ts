@@ -1,5 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test, type APIRequestContext, type Browser, type Page } from '@playwright/test';
+import type { APIRequestContext, Browser, Page } from '@playwright/test';
+import { expect, test } from './fixtures';
 import { newPerson, shoot, signInWithCode, signUp, uniqueEmail, withDb } from './helpers';
 
 /**
@@ -295,6 +296,50 @@ test.describe.serial('licence fallback', () => {
     await expect(record).toContainText('licence-notice-v1');
     await expect(record.getByRole('button', { name: 'Revoke that approval' })).toBeVisible();
     await shoot(third, 'licence-admin-dispute');
+  });
+
+  test('an admin revokes the disputed approval, then declines the dispute', async ({
+    browser,
+    request,
+  }) => {
+    // The dispute from the test before is the newest review in the third admin's queue.
+    const third = await adminOnQueue(browser, request, THIRD_ADMIN);
+    await openNewest(third);
+    const record = third.getByRole('region', { name: 'Dispute' });
+    await record.getByRole('button', { name: 'Revoke that approval' }).click();
+    const revoke = third.getByRole('dialog', { name: 'Revoke this approval?' });
+    await revoke.getByRole('radio', { name: /Review error/ }).check();
+    await revoke.getByRole('button', { name: 'Revoke approval' }).click();
+    await expect(revoke).toHaveCount(0);
+    await expect(record).toContainText('Revoked');
+    await expect(record.getByRole('button', { name: 'Revoke that approval' })).toHaveCount(0);
+
+    // Deciding the dispute empties this admin's queue, so the suite can run again.
+    await third.getByRole('button', { name: 'Decline', exact: true }).click();
+    await third.getByLabel('Reason').selectOption('OTHER');
+    await third.getByRole('button', { name: 'Decline licence' }).click();
+    await expect(third.getByText(/^Declined: Other\./)).toBeVisible();
+  });
+
+  // The guard also proves the page does not re-read the review it left (that read answers 403).
+  test('an admin steps back from a review and it leaves their queue', async ({
+    browser,
+    request,
+  }) => {
+    await veteranSendsLicence(browser, request, 'licence-recuse');
+    const first = await adminOnQueue(browser, request, FIRST_ADMIN);
+    const reviews = first.getByRole('link', { name: /^Licence review, sent / });
+    await expect(reviews.last()).toBeVisible();
+    const before = await reviews.count();
+    await openNewest(first);
+    await first.getByRole('button', { name: 'Step back from this review' }).click();
+    await first
+      .getByRole('dialog', { name: 'Step back from this review?' })
+      .getByRole('button', { name: 'Step back' })
+      .click();
+    await expect(first).toHaveURL(/\/admin\/licence-reviews$/);
+    await expect(first.getByRole('heading', { level: 1, name: 'Licence reviews' })).toBeVisible();
+    await expect(reviews).toHaveCount(before - 1);
   });
 
   test('licence path is never offered after a VA 400', async ({ page, request }) => {

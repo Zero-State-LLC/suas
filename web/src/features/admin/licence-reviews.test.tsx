@@ -309,6 +309,9 @@ describe('Licence review page (L5.2 to L5.8)', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Step back' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/admin/licence-reviews'));
     expect(client.POST.mock.calls[0]?.[0]).toBe(command('recuse'));
+    // The server now answers 403 for it, so the page must not read it again on the way out.
+    await screen.findByText('queue');
+    expect(client.GET.mock.calls.filter(([path]) => path === DETAIL)).toHaveLength(1);
   });
 
   it('a dispute shows the conflicting review record and can revoke it with a reason', async () => {
