@@ -1,3 +1,4 @@
+import { CHALLENGE_TTL_SECONDS } from '../../../src/auth/constants';
 import { expect, test } from '../fixtures';
 import type { Page, Response } from '@playwright/test';
 import {
@@ -26,8 +27,8 @@ const VERIFY = /\/api\/v0\/auth\/challenges\/commands\/verify$/;
 const WRONG_CODE = 'The sign-in code is invalid or has expired.';
 const TOO_MANY = /^Too many tries\. Try again in \d+ (minutes?|seconds?)\.$/;
 
-/** The code lifetime: CHALLENGE_TTL_SECONDS (900) in src/auth/constants.ts. */
-const CODE_TTL_MS = 15 * 60_000;
+/** The code lifetime, read from the server constant so the two cannot drift. */
+const CODE_TTL_MS = CHALLENGE_TTL_SECONDS.value * 1000;
 
 /**
  * Runs `ask`, which sends one code request, and returns the window its expiry must fall in:
