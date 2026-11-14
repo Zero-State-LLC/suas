@@ -28,16 +28,6 @@ export {
   type ResendSendOutcome,
 } from './resend-email.js';
 export {
-  createGmailSmtpEmailChannel,
-  GMAIL_SMTP_FAILURE_REASONS,
-  GMAIL_SMTP_IMPLEMENTATION,
-  GmailSmtpEmailChannel,
-  GmailSmtpEmailMisconfiguredError,
-  type GmailSmtpEmailChannelOptions,
-  type GmailSmtpEmailLogRecord,
-  type GmailSmtpEmailLogger,
-} from './gmail-smtp-email.js';
-export {
   EMAIL_TEMPLATE_CATALOG_VERSION,
   EMAIL_TEMPLATE_KEYS,
   EmailTemplateContextError,

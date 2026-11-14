@@ -16,8 +16,7 @@
  *
  * Challenge EMAIL/SMS uses the same notification channel port as product
  * notifications. There is no second Resend client. `createChallengeDelivery`
- * uses the provider-backed EMAIL port when D-004's `resend` or R11.2's
- * `gmail_smtp` mode (proposal) is selected.
+ * uses the provider-backed EMAIL port when D-004's `resend` mode is selected.
  */
 
 import type { CommunicationMode, SuasConfig } from '../config/index.js';
@@ -26,7 +25,6 @@ import type {
   NotificationChannelPort,
   OutboundMessage,
 } from '../notifications/channels.js';
-import { GMAIL_SMTP_IMPLEMENTATION } from '../notifications/gmail-smtp-email.js';
 import { RESEND_IMPLEMENTATION } from '../notifications/resend-email.js';
 import { renderEmailTemplate } from '../notifications/templates.js';
 
@@ -237,17 +235,14 @@ function reportedDeliveryMode(
 }
 
 function isProviderBacked(port: NotificationChannelPort | undefined): boolean {
-  return (
-    port?.implementation === RESEND_IMPLEMENTATION ||
-    port?.implementation === GMAIL_SMTP_IMPLEMENTATION
-  );
+  return port?.implementation === RESEND_IMPLEMENTATION;
 }
 
 /**
  * Build the delivery port for this configuration.
  *
- * When a caller supplies an EMAIL port whose implementation is `resend` or
- * `gmail_smtp`, challenges use that same port.
+ * When a caller supplies an EMAIL port whose implementation is `resend`,
+ * challenges use that same port.
  */
 export function createChallengeDelivery(
   config: SuasConfig,
