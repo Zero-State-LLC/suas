@@ -10,11 +10,10 @@
  *   message data is retryable.
  */
 
-import { isStagingFixtureAddress } from '../auth/staging-access.js';
 import type { NotificationChannelPort, OutboundMessage, SendAcknowledgement } from './channels.js';
 import { GmailSmtpSender } from './gmail-smtp-sender.js';
-import { LambdaRelaySmtpSender } from './lambda-relay-sender.js';
 import { smtpMessageId, type SmtpResultClass, type SmtpSender } from './smtp.js';
+import { stagingRecipientAllowed, type RecipientAllowed } from './staging-recipients.js';
 
 export const GMAIL_SMTP_IMPLEMENTATION = 'gmail_smtp' as const;
 
@@ -26,20 +25,6 @@ export const GMAIL_SMTP_FAILURE_REASONS = {
   invalid_message: 'invalid_message',
   recipient_not_allowed: 'recipient_not_allowed',
 } as const;
-
-/** May the last hop send to this address? */
-export type RecipientAllowed = (to: string) => boolean;
-
-/**
- * The STAGING last-hop allowlist (r263 F2): a synthetic address (RFC 2606/6761 reserved
- * domains), or a `+tag` address of the configured fixture mailbox (R11.7), never the bare
- * mailbox. With no mailbox configured, only synthetic addresses pass, so nothing real is sent.
- * gmail_smtp is refused in LOCAL and TEST and PRODUCTION is refused as a whole, so STAGING is
- * the only class that reaches this channel.
- */
-export function stagingRecipientAllowed(mailbox: string | undefined): RecipientAllowed {
-  return (to) => isStagingFixtureAddress(to, mailbox);
-}
 
 /** Structured send log. Never includes addresses, subjects, bodies or server replies. */
 export interface GmailSmtpEmailLogRecord {
@@ -67,9 +52,6 @@ export class GmailSmtpEmailMisconfiguredError extends Error {
 export interface GmailSmtpEmailChannelOptions {
   readonly user: string | undefined;
   readonly appPassword: string | undefined;
-  /** When set, the outside-VPC relay function sends; it alone holds the app password. */
-  readonly relayFunction: string | undefined;
-  readonly region: string | undefined;
   /** SUAS_STAGING_FIXTURE_MAILBOX: its `+tag` addresses may receive mail (R11.7). */
   readonly fixtureMailbox: string | undefined;
   readonly logger?: GmailSmtpEmailLogger;
@@ -79,28 +61,17 @@ function present(value: string | undefined): value is string {
   return value !== undefined && value.trim() !== '';
 }
 
-/** Fail closed: the relay needs its name and region, a direct send needs user and password. */
+/** Fail closed: a direct send needs user and password. */
 export function createGmailSmtpEmailChannel(
   options: GmailSmtpEmailChannelOptions,
 ): GmailSmtpEmailChannel {
-  let sender: SmtpSender;
-  if (present(options.relayFunction)) {
-    if (!present(options.region))
-      throw new GmailSmtpEmailMisconfiguredError('SUAS_AWS_REGION is absent');
-    sender = new LambdaRelaySmtpSender({
-      functionName: options.relayFunction,
-      region: options.region,
-    });
-  } else {
-    if (!present(options.user))
-      throw new GmailSmtpEmailMisconfiguredError('SUAS_SMTP_USER is absent');
-    if (!present(options.appPassword)) {
-      throw new GmailSmtpEmailMisconfiguredError('SUAS_SMTP_APP_PASSWORD is absent');
-    }
-    sender = new GmailSmtpSender({ user: options.user, appPassword: options.appPassword });
+  if (!present(options.user))
+    throw new GmailSmtpEmailMisconfiguredError('SUAS_SMTP_USER is absent');
+  if (!present(options.appPassword)) {
+    throw new GmailSmtpEmailMisconfiguredError('SUAS_SMTP_APP_PASSWORD is absent');
   }
   return new GmailSmtpEmailChannel(
-    sender,
+    new GmailSmtpSender({ user: options.user, appPassword: options.appPassword }),
     options.logger,
     stagingRecipientAllowed(options.fixtureMailbox),
   );

@@ -338,6 +338,9 @@ const rawConfigSchema = z.object({
   RESEND_API_KEY: optionalRaw,
   // The `resend` sender. `gmail_smtp` sends as SUAS_SMTP_USER instead (R11.2).
   SUAS_EMAIL_FROM: optionalRaw,
+  // `resend` from inside the VPC (suas #305): the outside-VPC relay function holds the key
+  // and the sender, so neither is set beside it.
+  SUAS_EMAIL_RELAY_FUNCTION: optionalRaw,
   // `gmail_smtp` (R11.2): the Gmail address and its app password for a direct send, or
   // the relay function that holds both. The password is never set beside the relay.
   SUAS_SMTP_USER: optionalRaw,
@@ -526,6 +529,8 @@ export interface SuasConfig {
     readonly sms: CommunicationMode;
     readonly resendApiKey: string | undefined;
     readonly emailFrom: string | undefined;
+    /** When set, `resend` sends through this outside-VPC relay function. */
+    readonly relayFunction: string | undefined;
     readonly smtp: {
       readonly user: string | undefined;
       readonly appPassword: string | undefined;
@@ -754,7 +759,9 @@ function validateAwsCapabilities(
     }
   }
   if (
-    (awsEnabled.length > 0 || raw.SUAS_SMTP_RELAY_FUNCTION !== undefined) &&
+    (awsEnabled.length > 0 ||
+      raw.SUAS_SMTP_RELAY_FUNCTION !== undefined ||
+      raw.SUAS_EMAIL_RELAY_FUNCTION !== undefined) &&
     raw.SUAS_AWS_REGION === undefined
   ) {
     issue('SUAS_AWS_REGION is required when an AWS-backed capability mode is selected.');
@@ -1350,18 +1357,39 @@ export const configSchema = rawConfigSchema.superRefine((raw, ctx) => {
         message: `SUAS_EMAIL_MODE=resend is forbidden in ${environment}; use fake or sink.`,
       });
     }
-    if (raw.RESEND_API_KEY === undefined) {
+    // Through the relay, the key and the sender live on the relay function only. The STAGING
+    // VPC has no internet egress, so STAGING has no direct Resend path (suas #305).
+    const viaRelay = raw.SUAS_EMAIL_RELAY_FUNCTION !== undefined;
+    if (environment === 'STAGING' && !viaRelay) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'RESEND_API_KEY is required when SUAS_EMAIL_MODE=resend.',
+        message:
+          'SUAS_EMAIL_MODE=resend in STAGING requires SUAS_EMAIL_RELAY_FUNCTION; direct Resend from the VPC is refused.',
       });
+    } else {
+      for (const name of ['RESEND_API_KEY', 'SUAS_EMAIL_FROM'] as const) {
+        if (viaRelay && raw[name] !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${name} must not be set with SUAS_EMAIL_RELAY_FUNCTION; the relay holds it.`,
+          });
+        } else if (!viaRelay && raw[name] === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${name} is required when SUAS_EMAIL_MODE=resend.`,
+          });
+        }
+      }
     }
-    if (raw.SUAS_EMAIL_FROM === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'SUAS_EMAIL_FROM is required when SUAS_EMAIL_MODE=resend.',
-      });
-    }
+  }
+  if (
+    raw.SUAS_EMAIL_RELAY_FUNCTION !== undefined &&
+    !LAMBDA_FUNCTION_PATTERN.test(raw.SUAS_EMAIL_RELAY_FUNCTION)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'SUAS_EMAIL_RELAY_FUNCTION must be a Lambda function name or ARN.',
+    });
   }
 
   validateAwsCapabilities(raw, environment, ctx);
@@ -1535,6 +1563,7 @@ export function shapeConfig(
       sms: raw.SUAS_SMS_MODE,
       resendApiKey: raw.RESEND_API_KEY,
       emailFrom: raw.SUAS_EMAIL_FROM,
+      relayFunction: raw.SUAS_EMAIL_RELAY_FUNCTION,
       smtp: {
         user: raw.SUAS_SMTP_USER,
         appPassword: raw.SUAS_SMTP_APP_PASSWORD,

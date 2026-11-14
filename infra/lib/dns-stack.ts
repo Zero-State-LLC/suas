@@ -7,7 +7,7 @@
  *   for the suas-specs #61 R6.8 gate and an owner decision (see README).
  * - The mail records that exist on Cloudflare today (Resend DKIM, `send` SPF and MX).
  *
- * There is no SES identity: v1 STAGING sends through Gmail SMTP (suas-specs #75 R11.2).
+ * There is no SES identity: v1 STAGING sends through Resend (suas #305).
  */
 
 import { CfnOutput, Fn, RemovalPolicy, Stack, type StackProps } from 'aws-cdk-lib';

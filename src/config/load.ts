@@ -76,6 +76,7 @@ export function describeConfig(config: SuasConfig): Record<string, string | numb
     sms_mode: config.notifications.sms,
     resend_api_key_configured: config.notifications.resendApiKey !== undefined,
     email_from_configured: config.notifications.emailFrom !== undefined,
+    email_relay_configured: config.notifications.relayFunction !== undefined,
     smtp_user_configured: config.notifications.smtp.user !== undefined,
     smtp_app_password_configured: config.notifications.smtp.appPassword !== undefined,
     smtp_relay_configured: config.notifications.smtp.relayFunction !== undefined,

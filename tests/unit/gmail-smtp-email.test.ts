@@ -5,14 +5,11 @@
  */
 
 import type { Readable } from 'node:stream';
-import type { InvokeCommand, InvokeCommandOutput } from '@aws-sdk/client-lambda';
 import { describe, expect, it } from 'vitest';
-import { createSmtpRelayHandler } from '../../src/aws/smtp-relay-lambda.js';
 import { describeConfig, loadConfig, tryLoadConfig } from '../../src/config/index.js';
 import { createChannelRegistry } from '../../src/notifications/channels.js';
 import {
   GmailSmtpEmailChannel,
-  stagingRecipientAllowed,
   type GmailSmtpEmailLogRecord,
 } from '../../src/notifications/gmail-smtp-email.js';
 import {
@@ -20,8 +17,8 @@ import {
   type SmtpConnectionLike,
   type SmtpErrorLike,
 } from '../../src/notifications/gmail-smtp-sender.js';
-import { LambdaRelaySmtpSender } from '../../src/notifications/lambda-relay-sender.js';
 import type { SmtpMessage, SmtpSendResult } from '../../src/notifications/smtp.js';
+import { stagingRecipientAllowed } from '../../src/notifications/staging-recipients.js';
 import { validEnv } from '../helpers/env.js';
 
 const USER = 'suas.staging.sender@example.invalid';
@@ -53,14 +50,6 @@ describe('gmail_smtp configuration', () => {
     expect(described).not.toContain(PASSWORD);
     expect(described).not.toContain(USER);
     expect(described).toContain('"smtp_app_password_configured":true');
-  });
-
-  it('accepts the relay without any credential in this process', () => {
-    const config = loadConfig(
-      staging({ SUAS_SMTP_RELAY_FUNCTION: 'suas-smtp-relay', SUAS_AWS_REGION: 'us-west-2' }),
-    );
-    expect(config.notifications.smtp.relayFunction).toBe('suas-smtp-relay');
-    expect(createChannelRegistry(config).get('EMAIL')?.implementation).toBe('gmail_smtp');
   });
 
   it('is refused in LOCAL and TEST, like resend', () => {
@@ -273,128 +262,6 @@ describe('GmailSmtpEmailChannel', () => {
   });
 });
 
-class ScriptedLambda {
-  readonly commands: InvokeCommand[] = [];
-  constructor(private readonly outcome: InvokeCommandOutput | Error) {}
-  send(command: InvokeCommand): Promise<InvokeCommandOutput> {
-    this.commands.push(command);
-    return this.outcome instanceof Error
-      ? Promise.reject(this.outcome)
-      : Promise.resolve(this.outcome);
-  }
-}
-
-const payload = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value));
-
-describe('relay invoke', () => {
-  const relay = (outcome: InvokeCommandOutput | Error) => {
-    const client = new ScriptedLambda(outcome);
-    return {
-      client,
-      sender: new LambdaRelaySmtpSender({ functionName: 'relay', region: 'us-west-2', client }),
-    };
-  };
-
-  it('sends the rendered message and returns the relay result', async () => {
-    const { client, sender } = relay({
-      $metadata: {},
-      StatusCode: 200,
-      Payload: payload({ result: 'sent', response_code: 250 }) as NonNullable<
-        InvokeCommandOutput['Payload']
-      >,
-    });
-    expect(await sender.send(MESSAGE)).toEqual({ result: 'sent', responseCode: 250 });
-    const sentPayload = JSON.parse(
-      new TextDecoder().decode(client.commands[0]?.input.Payload as Uint8Array),
-    );
-    expect(sentPayload).toEqual({
-      to: TO,
-      subject: 'Subject line',
-      text: 'Body text',
-      html: '<p>Body text</p>',
-      message_id: 'a'.repeat(32),
-    });
-  });
-
-  it.each(['ECONNRESET', 'EPIPE', 'UND_ERR_SOCKET', 'UnknownError'])(
-    'does not blindly retry an invoke with an unknown outcome (%s)',
-    async (code) => {
-      const error = Object.assign(new Error('lost relay response'), { code });
-      expect((await relay(error).sender.send(MESSAGE)).result).toBe('ambiguous_ack');
-    },
-  );
-
-  it('reads a relay crash or invoke timeout as ambiguous, and a refused invoke as retryable', async () => {
-    const crashed = relay({ $metadata: {}, FunctionError: 'Unhandled' });
-    expect((await crashed.sender.send(MESSAGE)).result).toBe('ambiguous_ack');
-    const timeout = Object.assign(new Error('timed out'), { name: 'TimeoutError' });
-    expect((await relay(timeout).sender.send(MESSAGE)).result).toBe('ambiguous_ack');
-    const throttled = Object.assign(new Error('rate'), { name: 'TooManyRequestsException' });
-    expect((await relay(throttled).sender.send(MESSAGE)).result).toBe('retryable');
-  });
-});
-
-describe('relay function contract', () => {
-  const secret = JSON.stringify({ SUAS_SMTP_USER: USER, SUAS_SMTP_APP_PASSWORD: PASSWORD });
-  const request = {
-    to: TO,
-    subject: 'Subject line',
-    text: 'Body text',
-    message_id: 'b'.repeat(32),
-  };
-
-  it('reads the secret once per container and returns the SMTP result class', async () => {
-    let reads = 0;
-    const received: SmtpMessage[] = [];
-    const handler = createSmtpRelayHandler({
-      readSecret: () => {
-        reads += 1;
-        return Promise.resolve(secret);
-      },
-      allowRecipient: () => true,
-      createSender: (credentials) => {
-        expect(credentials).toEqual({ SUAS_SMTP_USER: USER, SUAS_SMTP_APP_PASSWORD: PASSWORD });
-        return {
-          implementation: 'scripted',
-          send: (message) => {
-            received.push(message);
-            return Promise.resolve({ result: 'sent', responseCode: 250 });
-          },
-        };
-      },
-    });
-    expect(await handler(request)).toEqual({ result: 'sent', response_code: 250 });
-    expect(await handler(request)).toEqual({ result: 'sent', response_code: 250 });
-    expect(reads).toBe(1);
-    expect(received[0]).toEqual({
-      to: TO,
-      subject: 'Subject line',
-      text: 'Body text',
-      messageId: 'b'.repeat(32),
-    });
-  });
-
-  it('rejects a malformed request and retries a missing or malformed secret', async () => {
-    const neverSends = () => {
-      throw new Error('must not build a sender');
-    };
-    const handler = createSmtpRelayHandler({
-      readSecret: () => Promise.resolve('{}'),
-      createSender: neverSends,
-      allowRecipient: () => true,
-    });
-    expect(await handler({ ...request, to: 'not-an-address' })).toEqual({ result: 'rejected' });
-    expect(await handler({ ...request, extra: true })).toEqual({ result: 'rejected' });
-    expect(await handler(request)).toEqual({ result: 'retryable' });
-    const unset = createSmtpRelayHandler({
-      readSecret: () => Promise.resolve(undefined),
-      createSender: neverSends,
-      allowRecipient: () => true,
-    });
-    expect(await unset(request)).toEqual({ result: 'retryable' });
-  });
-});
-
 // r263 F2: a fail-closed STAGING recipient allowlist at the last hop.
 describe('STAGING last-hop recipient allowlist', () => {
   // Routable addresses are built at run time (repository hygiene, TESTING.md §12).
@@ -478,29 +345,5 @@ describe('STAGING last-hop recipient allowlist', () => {
     const channel = new GmailSmtpEmailChannel(sender);
     expect((await channel.send(outbound(FRIEND))).accepted).toBe(false);
     expect(sent).toHaveLength(0);
-  });
-
-  it('the relay refuses an address off the list before it reads the secret', async () => {
-    let reads = 0;
-    const handler = createSmtpRelayHandler({
-      readSecret: () => {
-        reads += 1;
-        return Promise.resolve(
-          JSON.stringify({ SUAS_SMTP_USER: USER, SUAS_SMTP_APP_PASSWORD: PASSWORD }),
-        );
-      },
-      createSender: () => {
-        throw new Error('must not build a sender');
-      },
-      allowRecipient: stagingRecipientAllowed(undefined),
-    });
-    const request = {
-      to: FRIEND,
-      subject: 'Subject line',
-      text: 'Body text',
-      message_id: 'c'.repeat(32),
-    };
-    expect(await handler(request)).toEqual({ result: 'rejected' });
-    expect(reads).toBe(0);
   });
 });

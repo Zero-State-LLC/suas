@@ -30,6 +30,7 @@ export const SAMPLE_SSM_VALUES: Record<string, string> = {
   '/suas/staging/fixture-registry':
     '00000000-0000-4000-8000-000000000001:11111111-1111-4111-8111-111111111111',
   '/suas/staging/fixture-mailbox': 'fixture-mailbox@example.com',
+  '/suas/staging/email-from': 'SUAS Staging <staging@example.com>',
 };
 
 /**
