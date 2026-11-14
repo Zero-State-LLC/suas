@@ -18,6 +18,7 @@
 
 import type { CommunicationMode, SuasConfig } from '../config/index.js';
 import { createGmailSmtpEmailChannel, type GmailSmtpEmailLogRecord } from './gmail-smtp-email.js';
+import { createLambdaRelayEmailChannel, type RelayEmailLogRecord } from './lambda-relay-sender.js';
 import { createResendEmailChannel, type ResendEmailLogRecord } from './resend-email.js';
 import { stagingRecipientAllowed } from './staging-recipients.js';
 
@@ -175,7 +176,9 @@ export class InternalChannel implements NotificationChannelPort {
 }
 
 /** Content-free email outcome log (implementation, accepted, outcome); NOTIFICATIONS.md §5, §10. */
-function logEmailSend(record: ResendEmailLogRecord | GmailSmtpEmailLogRecord): void {
+function logEmailSend(
+  record: ResendEmailLogRecord | RelayEmailLogRecord | GmailSmtpEmailLogRecord,
+): void {
   console.log(JSON.stringify({ msg: 'email_send', ...record }));
 }
 
@@ -201,10 +204,10 @@ export class FailingChannel implements NotificationChannelPort {
  * port at all, so the caller reports the channel unavailable instead of faking a
  * send. IN_APP is internal and always present.
  *
- * D-004 selects Resend as the external EMAIL provider; R11.2 (proposal) replaces it
- * with `gmail_smtp` on v1 STAGING. Fake and sink stay recording-only; `resend` and
- * `gmail_smtp` construct their adapters with validated configuration. `gmail_smtp`
- * sends through the relay function when one is configured, else directly.
+ * D-004 selects Resend as the external EMAIL provider. Fake and sink stay recording-only;
+ * `resend` and `gmail_smtp` construct their adapters with validated configuration. `resend`
+ * sends through the outside-VPC relay function when one is configured (suas #305), else
+ * directly. Both check the STAGING recipient allowlist first.
  */
 export function createChannelRegistry(
   config: SuasConfig,
@@ -212,14 +215,23 @@ export function createChannelRegistry(
   const registry = new Map<NotificationChannel, NotificationChannelPort>();
 
   if (config.notifications.email === 'resend') {
+    const allowRecipient = stagingRecipientAllowed(config.stagingFixtureMailbox);
+    const relayFunction = config.notifications.relayFunction;
     registry.set(
       'EMAIL',
-      createResendEmailChannel({
-        apiKey: config.notifications.resendApiKey,
-        fromAddress: config.notifications.emailFrom,
-        allowRecipient: stagingRecipientAllowed(config.stagingFixtureMailbox),
-        logger: logEmailSend,
-      }),
+      relayFunction !== undefined
+        ? createLambdaRelayEmailChannel({
+            functionName: relayFunction,
+            region: config.aws.region,
+            allowRecipient,
+            logger: logEmailSend,
+          })
+        : createResendEmailChannel({
+            apiKey: config.notifications.resendApiKey,
+            fromAddress: config.notifications.emailFrom,
+            allowRecipient,
+            logger: logEmailSend,
+          }),
     );
   } else if (config.notifications.email === 'gmail_smtp') {
     registry.set(
@@ -227,8 +239,6 @@ export function createChannelRegistry(
       createGmailSmtpEmailChannel({
         user: config.notifications.smtp.user,
         appPassword: config.notifications.smtp.appPassword,
-        relayFunction: config.notifications.smtp.relayFunction,
-        region: config.aws.region,
         fixtureMailbox: config.stagingFixtureMailbox,
         logger: logEmailSend,
       }),
