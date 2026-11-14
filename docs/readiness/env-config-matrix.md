@@ -5,8 +5,8 @@ Pin source: `src/release/pins.ts`. Living values must match that file.
 | Variable                           | LOCAL                                       | TEST            | STAGING                                        | PRODUCTION                               |
 | ---------------------------------- | ------------------------------------------- | --------------- | ---------------------------------------------- | ---------------------------------------- |
 | `SUAS_ENV`                         | required                                    | required        | required                                       | rejected until SPEC-018 authorizes       |
-| `SUAS_SPEC_VERSION`                | `0.9.0`                                     | `0.9.0`         | `0.9.0`                                        | `0.9.0` when authorized                  |
-| `SUAS_RELEASE_MANIFEST`            | `RELEASE_MANIFEST-0.9.0.md`                 | same            | same                                           | same when authorized                     |
+| `SUAS_SPEC_VERSION`                | `0.10.0`                                    | `0.10.0`        | `0.10.0`                                       | `0.10.0` when authorized                 |
+| `SUAS_RELEASE_MANIFEST`            | `RELEASE_MANIFEST-0.10.0.md`                | same            | same                                           | same when authorized                     |
 | `SUAS_ALLOW_REAL_EXTERNAL_EFFECTS` | false                                       | false           | false                                          | only if release authorizes               |
 | `SUAS_JOB_QUEUE`                   | in-memory fake (default) or postgres-outbox | same            | ignored: Postgres outbox (D-022 pending)       | ignored: Postgres outbox (D-022 pending) |
 | `DATABASE_QUERY_TIMEOUT_MS`        | optional, default 20000                     | same            | same                                           | same                                     |
@@ -24,8 +24,8 @@ Pin source: `src/release/pins.ts`. Living values must match that file.
 Email (owner issue suas #305; D-004 Resend): LOCAL and TEST reject `resend`. On AWS STAGING the
 API and job worker set `SUAS_EMAIL_MODE=resend` and only `SUAS_EMAIL_RELAY_FUNCTION`; the relay
 function outside the VPC reads `RESEND_API_KEY` from its Secrets Manager secret and has
-`SUAS_EMAIL_FROM` in its environment. Without the relay variable, `resend` needs both in the
-process. Every send checks the STAGING recipient allowlist first. There is no other EMAIL
-provider mode.
+`SUAS_EMAIL_FROM` in its environment. STAGING refuses `resend` without the relay variable (no
+direct send from the VPC). Every send checks the STAGING recipient allowlist first. There is no
+other EMAIL provider mode.
 
 Source of truth: `src/config/schema.ts` + ENVIRONMENT.md + `src/release/pins.ts`.

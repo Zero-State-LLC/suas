@@ -76,9 +76,12 @@ function DecidedRecord({ review }: { review: AdminLicenceReview }) {
 export default function AdminLicenceReviewPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
-  const query = useAdminLicenceReview(id);
-  const me = useMe();
   const command = useLicenceCommand(id);
+  // A recuse drops this review from the cache and the server now answers 403 for it, so the
+  // page must not read it again while it leaves for the queue.
+  const recused = command.isSuccess && command.variables.name === 'recuse';
+  const query = useAdminLicenceReview(id, !recused);
+  const me = useMe();
   const conflictId = query.data?.conflicting_review?.review_id ?? '';
   const conflictCommand = useLicenceCommand(conflictId);
   const flight = useSingleFlight();

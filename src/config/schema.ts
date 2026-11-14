@@ -81,13 +81,13 @@ export const CHAT_PUSH_MODES = ['disabled', 'local', 'apigw'] as const;
 export type ChatPushMode = (typeof CHAT_PUSH_MODES)[number];
 export type IdVerificationMode = (typeof ID_VERIFICATION_MODES)[number];
 /**
- * VA Veteran Confirmation (suas-specs #72 R9.1, proposal): `fixture` is LOCAL and TEST
+ * VA Veteran Confirmation (suas-specs #72 R9.1, released in 0.10.0): `fixture` is LOCAL and TEST
  * only; `sandbox` is the VA sandbox, refused in PRODUCTION until D-035 settles.
  */
 export const VA_CONFIRMATION_MODES = ['disabled', 'fixture', 'sandbox'] as const;
 export type VaConfirmationMode = (typeof VA_CONFIRMATION_MODES)[number];
 /**
- * Licence reader (suas-specs R10.1, proposal; L9.1): `fixture` is LOCAL and TEST only,
+ * Licence reader (suas-specs R10.1, released in 0.10.0; L9.1): `fixture` is LOCAL and TEST only,
  * `scry` LOCAL and STAGING only, and PRODUCTION allows `disabled` alone.
  */
 export const LICENCE_READER_MODES = ['disabled', 'fixture', 'scry'] as const;
@@ -815,7 +815,7 @@ function validateAwsCapabilities(
 }
 
 /**
- * VA Veteran Confirmation modes (suas-specs #72 R9.1, proposal; D035 §5, §6, §14 items
+ * VA Veteran Confirmation modes (suas-specs #72 R9.1, released in 0.10.0; D035 §5, §6, §14 items
  * 2-4, 9-10). Every mismatch fails closed; issue text never includes the key.
  */
 function validateVaConfirmation(
@@ -865,7 +865,7 @@ function validateVaConfirmation(
 }
 
 /**
- * Licence reader modes (suas-specs R10.1, proposal; L9.1). The Scry URL and token are not
+ * Licence reader modes (suas-specs R10.1, released in 0.10.0; L9.1). The Scry URL and token are not
  * required at startup, because only the job worker calls Scry; without them a read settles
  * as a configuration failure. The synthetic IIN is required wherever L4.2 applies.
  */
@@ -1343,19 +1343,28 @@ export const configSchema = rawConfigSchema.superRefine((raw, ctx) => {
         message: `SUAS_EMAIL_MODE=resend is forbidden in ${environment}; use fake or sink.`,
       });
     }
-    // Through the relay, the key and the sender live on the relay function only.
+    // Through the relay, the key and the sender live on the relay function only. The STAGING
+    // VPC has no internet egress, so STAGING has no direct Resend path (suas #305).
     const viaRelay = raw.SUAS_EMAIL_RELAY_FUNCTION !== undefined;
-    for (const name of ['RESEND_API_KEY', 'SUAS_EMAIL_FROM'] as const) {
-      if (viaRelay && raw[name] !== undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `${name} must not be set with SUAS_EMAIL_RELAY_FUNCTION; the relay holds it.`,
-        });
-      } else if (!viaRelay && raw[name] === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: `${name} is required when SUAS_EMAIL_MODE=resend.`,
-        });
+    if (environment === 'STAGING' && !viaRelay) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'SUAS_EMAIL_MODE=resend in STAGING requires SUAS_EMAIL_RELAY_FUNCTION; direct Resend from the VPC is refused.',
+      });
+    } else {
+      for (const name of ['RESEND_API_KEY', 'SUAS_EMAIL_FROM'] as const) {
+        if (viaRelay && raw[name] !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${name} must not be set with SUAS_EMAIL_RELAY_FUNCTION; the relay holds it.`,
+          });
+        } else if (!viaRelay && raw[name] === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${name} is required when SUAS_EMAIL_MODE=resend.`,
+          });
+        }
       }
     }
   }
