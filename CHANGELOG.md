@@ -15,6 +15,8 @@ SPEC-018 is still blocked. Release steps: [RELEASING.md](RELEASING.md).
 
 ### Security audit corrections
 
+- Restrict STAGING Resend to the two authentication template keys; operational alerts and follow-ups are refused before external transport (ENVIRONMENT §3).
+
 - Recheck the authenticated helper identity under the Service Request row lock before mutation, preventing stale authorization across release and reassignment (DISPATCH §4, §14.7). No public API shape changes.
 - Refuse SES configuration in every environment until released authorization supersedes D-004; synthetic infrastructure uses sink email and carries no SES send grants.
 - Clarify runtime implementation boundary, historical evidence scope, current qualification work, and blocked production authorization.

@@ -7,7 +7,6 @@ import { describe, expect, it } from 'vitest';
 import { loadConfig } from '../../src/config/index.js';
 import {
   createSesEmailChannel,
-  SesEmailChannel,
   SesEmailMisconfiguredError,
   type OutboundMessage,
   type SesClientLike,
