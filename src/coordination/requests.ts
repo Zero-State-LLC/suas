@@ -237,6 +237,8 @@ export interface ServiceRequestCommandInput {
   readonly command: ServiceRequestCommand;
   readonly actorId: string;
   readonly actorType: 'VETERAN' | 'USER' | 'SERVICE_PROVIDER' | 'SYSTEM';
+  /** Server-derived helper identity to reauthorize under the request row lock. */
+  readonly requiredHolderUserId?: string;
   readonly reason?: string;
   /** Required when the command has more than one documented target. */
   readonly to?: ServiceRequestStatus;
@@ -296,9 +298,13 @@ export async function executeServiceRequestCommandInTx(
     throw new StaleRequestStateError(input.expectedStatus, request.status);
   }
 
-  // Under the row lock: only the current holder releases, even if the route's earlier
-  // check went stale (a release and re-accept by someone else in between).
-  if (input.command === 'RELEASE' && request.acceptedByUserId !== input.actorId) {
+  // Re-check every helper command under the row lock: a release and re-accept can
+  // change the holder after the route's authorization without changing the status.
+  if (
+    (input.requiredHolderUserId !== undefined &&
+      request.acceptedByUserId !== input.requiredHolderUserId) ||
+    (input.command === 'RELEASE' && request.acceptedByUserId !== input.actorId)
+  ) {
     throw new NotRequestHolderError();
   }
 
