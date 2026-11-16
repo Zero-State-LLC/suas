@@ -235,7 +235,7 @@ describe('functions', () => {
       expect(result.ok ? [] : result.issues, name).toEqual([]);
       if (result.ok && fn.Properties?.Handler === 'run.sh') {
         expect(result.config.environment).toBe('STAGING');
-        expect(result.config.notifications.email).toBe('ses');
+        expect(result.config.notifications.email).toBe('sink');
         expect(result.config.modelInference.mode).toBe('disabled');
         expect(result.config.modelInference.bedrockModelId).toBeUndefined();
         expect(result.config.idVerification.mode).toBe('disabled');
@@ -327,25 +327,20 @@ describe('IAM', () => {
     }
   });
 
-  it('never uses a wildcard resource for SES, and does not grant Bedrock', () => {
+  it('grants neither SES nor Bedrock permissions before released authorization', () => {
     const sensitive = statements(s.backend).filter((st) =>
       [st.Action].flat().some((a) => /^(bedrock|ses):/.test(a)),
     );
-    expect(sensitive.length).toBeGreaterThanOrEqual(1);
-    expect(
-      statements(s.backend).some((st) => [st.Action].flat().some((a) => a.startsWith('bedrock:'))),
-    ).toBe(false);
-    for (const st of sensitive) {
-      for (const resource of [st.Resource].flat()) {
-        expect(resource).not.toBe('*');
-        expect(JSON.stringify(resource)).not.toMatch(/^"\*"$/);
-      }
-    }
+    expect(sensitive).toEqual([]);
   });
 
-  it('scopes SES to the domain identity', () => {
-    const ses = statements(s.backend).find((st) => [st.Action].flat().includes('ses:SendEmail'));
-    expect(JSON.stringify(ses?.Resource)).toContain('identity/suasqrf.com');
+  it('keeps API and job worker email delivery in sink mode', () => {
+    for (const handler of ['run.sh', 'job-worker.handler']) {
+      s.backend.hasResourceProperties('AWS::Lambda::Function', {
+        Handler: handler,
+        Environment: { Variables: Match.objectLike({ SUAS_EMAIL_MODE: 'sink' }) },
+      });
+    }
   });
 });
 

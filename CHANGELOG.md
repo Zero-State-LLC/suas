@@ -13,6 +13,14 @@ SPEC-018 is still blocked. Release steps: [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+### Security audit corrections
+
+- Restrict STAGING Resend to the two authentication template keys; operational alerts and follow-ups are refused before external transport (ENVIRONMENT §3).
+
+- Recheck the authenticated helper identity under the Service Request row lock before mutation, preventing stale authorization across release and reassignment (DISPATCH §4, §14.7). No public API shape changes.
+- Refuse SES configuration in every environment until released authorization supersedes D-004; synthetic infrastructure uses sink email and carries no SES send grants.
+- Clarify runtime implementation boundary, historical evidence scope, current qualification work, and blocked production authorization.
+
 ### Changed
 
 - **Spec pin 0.9.0.** `src/release/pins.ts` now pins SUAS-specs `0.9.0` (`RELEASE_MANIFEST-0.9.0.md`, tag `v0.9.0`, specs commit `208705c`), up from `0.7.0`. CI, deploy and staging workflows, `wrangler.jsonc`, `.env.example` and the test environment carry the same two values. The `/api/v0` selector and event schema `0.1.0` are unchanged. Readiness stays `NOT_READY`; SPEC-018 stays blocked.

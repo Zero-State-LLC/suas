@@ -4,13 +4,9 @@
 
 import type { SendEmailCommandOutput } from '@aws-sdk/client-sesv2';
 import { describe, expect, it } from 'vitest';
-import { createChallengeDelivery, ChannelBackedChallengeDelivery } from '../../src/auth/index.js';
 import { loadConfig } from '../../src/config/index.js';
 import {
-  createChannelRegistry,
   createSesEmailChannel,
-  SES_IMPLEMENTATION,
-  SesEmailChannel,
   SesEmailMisconfiguredError,
   type OutboundMessage,
   type SesClientLike,
@@ -120,13 +116,9 @@ describe('SES mode selection', () => {
     SUAS_EMAIL_FROM: 'sender@example.invalid',
   });
 
-  it('registers the SES adapter for EMAIL and keeps challenge delivery on it', () => {
-    const config = loadConfig(stagingSes);
-    const registry = createChannelRegistry(config);
-    expect(registry.get('EMAIL')).toBeInstanceOf(SesEmailChannel);
-    expect(registry.get('EMAIL')?.implementation).toBe(SES_IMPLEMENTATION);
-    expect(createChallengeDelivery(config, registry)).toBeInstanceOf(
-      ChannelBackedChallengeDelivery,
+  it('refuses SES configuration before an operational adapter can be registered', () => {
+    expect(() => loadConfig(stagingSes)).toThrow(
+      'SUAS_EMAIL_MODE=ses is not authorized by the pinned release',
     );
   });
 });

@@ -96,8 +96,8 @@ export interface SendAcknowledgement {
 
 /**
  * Runtime mode on a port. `resend` and `ses` are adapter identities. `resend`
- * is not a released `SUAS_EMAIL_MODE` value (ENVIRONMENT.md §3); `ses` is the
- * v1 plan's replacement (V1_PROJECT_PLAN.md §4.1).
+ * is the released D-004 mode (ENVIRONMENT.md §3); `ses` remains a dormant
+ * proposal adapter and configuration rejects its selection.
  */
 export type ChannelRuntimeMode = CommunicationMode | 'internal' | 'resend' | 'ses';
 
@@ -192,6 +192,7 @@ export function createChannelRegistry(
       createResendEmailChannel({
         apiKey: config.notifications.resendApiKey,
         fromAddress: config.notifications.emailFrom,
+        authenticationOnly: config.environment === 'STAGING',
       }),
     );
   } else if (config.notifications.email === 'ses') {

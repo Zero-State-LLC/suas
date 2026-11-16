@@ -670,6 +670,13 @@ function validateAwsCapabilities(
     issue('SUAS_AWS_REGION must be an AWS region name such as us-west-2.');
   }
 
+  if (raw.SUAS_EMAIL_MODE === 'ses') {
+    issue(
+      'SUAS_EMAIL_MODE=ses is not authorized by the pinned release. ' +
+        'ENVIRONMENT.md §3 permits only Resend as an external EMAIL provider (D-004).',
+    );
+  }
+
   if (raw.SUAS_EMAIL_MODE === 'ses' && raw.SUAS_EMAIL_FROM === undefined) {
     issue('SUAS_EMAIL_FROM is required when SUAS_EMAIL_MODE=ses.');
   }

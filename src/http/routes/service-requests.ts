@@ -519,6 +519,7 @@ export function registerServiceRequestRoutes(
             command,
             actorId: context.userId,
             actorType,
+            ...(actorType === 'USER' ? { requiredHolderUserId: context.userId } : {}),
             ...(body.reason !== undefined ? { reason: body.reason } : {}),
             ...(body.to !== undefined ? { to: body.to as ServiceRequest['status'] } : {}),
             ...(body.expected_status !== undefined

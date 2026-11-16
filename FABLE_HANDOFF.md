@@ -2,12 +2,15 @@
 
 ## Canonical release
 
-Build against `scrimshawlife-ctrl/SUAS-specs` release **v0.9.0**.
+Build against the application’s pinned **v0.9.0** specification, commit `208705cfd2b6aa1ce913ac9e70a2d42a1c9487ad`. The Zero State specification copy contains that commit; release tags and history remain available in `scrimshawlife-ctrl/SUAS-specs`.
 
 - Specs merge pin: `208705cfd2b6aa1ce913ac9e70a2d42a1c9487ad` (`src/release/pins.ts`)
 - Manifest: `RELEASE_MANIFEST-0.9.0.md`
 - Decision ledger: `RELEASE_DECISIONS-0.9.0.md` (D-055 to D-063); inherited `RELEASE_DECISIONS-0.8.0.md` (D-050 to D-054); `RELEASE_DECISIONS-0.7.0.md` (D-038, with the D-037 record); `RELEASE_DECISIONS-0.6.0.md` (D-004); `RELEASE_DECISIONS-0.5.0.md` / `0.4.0.md` (D-035); `RELEASE_DECISIONS-0.3.0.md` (D-033); `RELEASE_DECISIONS-0.2.0.md` (D-011); `RELEASE_DECISIONS-0.1.5.md` (D-012); `RELEASE_DECISIONS-0.1.3.md` (D-018); `RELEASE_DECISIONS-0.1.2.md` (D-017); `RELEASE_DECISIONS-0.1.0.md` otherwise.
-- Current stage: SPEC-018 (blocked); SPEC-017 evidence recorded against pin `0.6.0`
+- Runtime implementation boundary: SPEC-017; prior evidence covers pin `0.6.0` only
+- Current engineering work: `0.9.0` conformance and synthetic qualification (not yet qualified)
+- Next launch qualification stage: SPEC-018 (blocked)
+- Production authorization: `SPEC_018_PRODUCTION_AUTHORIZED=false`
 - Production/pilot readiness: `NOT_READY`
 - Pin audit: [docs/PIN_INVENTORY.md](docs/PIN_INVENTORY.md)
 
@@ -69,3 +72,7 @@ A build should expose app version/commit, spec version, release manifest, enviro
 ## Definition of successful handoff
 
 You should be able to begin the current residual without asking what is canonical, what can contact real systems, which environment classes exist, how versions are identified, or which production surfaces are still disabled.
+
+## Repository reconciliation: 2026-11-16
+
+The audit target is `Zero-State-LLC/suas`; `Zero-State-LLC/suas-specs` currently contains the pinned 0.9.0 commit but no release tags. The source repository `scrimshawlife-ctrl/suas-specs` has released **0.10.0**. This build remains pinned to 0.9.0; a newer release does not prove its implementation is qualified. Reconcile the repository migration and review the release delta before re-pinning. Native repositories remain under `scrimshawlife-ctrl`. Historical handoff records below retain their original scope.

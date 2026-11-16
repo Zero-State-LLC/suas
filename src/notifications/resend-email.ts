@@ -48,6 +48,8 @@ const defaultTransport: FetchTransport = {
 export interface ResendEmailChannelOptions {
   readonly apiKey: string;
   readonly fromAddress: string;
+  /** D-004 limits STAGING external email to authentication-delivery evidence. */
+  readonly authenticationOnly?: boolean;
   readonly transport?: FetchTransport;
   readonly logger?: ResendEmailLogger;
 }
@@ -78,6 +80,7 @@ function requireConfigured(value: string | undefined, label: string): string {
 export function createResendEmailChannel(options: {
   readonly apiKey: string | undefined;
   readonly fromAddress: string | undefined;
+  readonly authenticationOnly?: boolean;
   readonly transport?: FetchTransport;
   readonly logger?: ResendEmailLogger;
 }): ResendEmailChannel {
@@ -86,6 +89,7 @@ export function createResendEmailChannel(options: {
   return new ResendEmailChannel({
     apiKey,
     fromAddress,
+    authenticationOnly: options.authenticationOnly ?? false,
     ...(options.transport !== undefined ? { transport: options.transport } : {}),
     ...(options.logger !== undefined ? { logger: options.logger } : {}),
   });
@@ -102,17 +106,26 @@ export class ResendEmailChannel implements NotificationChannelPort {
 
   private readonly apiKey: string;
   private readonly fromAddress: string;
+  private readonly authenticationOnly: boolean;
   private readonly transport: FetchTransport;
   private readonly logger: ResendEmailLogger | undefined;
 
   constructor(options: ResendEmailChannelOptions) {
     this.apiKey = options.apiKey;
     this.fromAddress = options.fromAddress;
+    this.authenticationOnly = options.authenticationOnly ?? false;
     this.transport = options.transport ?? defaultTransport;
     this.logger = options.logger;
   }
 
   async send(message: OutboundMessage): Promise<SendAcknowledgement> {
+    if (
+      this.authenticationOnly &&
+      message.templateVersion !== 'auth.email_otp' &&
+      message.templateVersion !== 'auth.magic_link'
+    ) {
+      return this.finish('not_accepted');
+    }
     if (message.channel !== 'EMAIL') {
       return this.finish('not_accepted');
     }

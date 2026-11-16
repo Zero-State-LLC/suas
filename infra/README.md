@@ -146,7 +146,7 @@ each function's environment is checked against the application's own config vali
 | `DATABASE_SSL_MODE`, `DATABASE_POOL_MAX`                                                        | `verify`, `3` on the API and job worker; the migrate function sets `DATABASE_POOL_MAX` to `1`                                     |
 | `SUAS_MIGRATIONS_MODE`                                                                          | `validate` (the migrate function uses `apply`; the job worker uses `off`)                                                         |
 | `SUAS_BROWSER_AUTH_MODE`, `SUAS_BROWSER_TENANT_ID`                                              | `email_otp`, the `browserTenantId` context                                                                                        |
-| `SUAS_EMAIL_MODE`, `SUAS_EMAIL_FROM`                                                            | `ses`, the `emailFrom` context                                                                                                    |
+| `SUAS_EMAIL_MODE`, `SUAS_EMAIL_FROM`                                                            | `sink`, the `emailFrom` context (no external email delivery)                                                                      |
 | `SUAS_SMS_MODE`                                                                                 | `sink` (as today's staging)                                                                                                       |
 | `SUAS_AWS_REGION`                                                                               | `us-west-2`                                                                                                                       |
 | `SUAS_MODEL_INFERENCE_MODE`                                                                     | `disabled`. R2.15 is not approved, so no model id is set.                                                                         |
@@ -167,8 +167,7 @@ each function's environment is checked against the application's own config vali
 ### IAM
 
 Each function has its own role with no managed policies: write to its own log group, plus the ENI actions Lambda
-needs in a VPC (not scopable). Added grants: SES `ses:SendEmail` on the one domain identity (API and job worker);
-S3 get/put/delete on the assets bucket objects plus `s3:ListBucket` on the bucket itself (API; without it a
+needs in a VPC (not scopable). There are no SES send grants. Added grants: S3 get/put/delete on the assets bucket objects plus `s3:ListBucket` on the bucket itself (API; without it a
 missing key returns AccessDenied instead of NoSuchKey). There is no `bedrock:InvokeModel` grant and no
 `execute-api:ManageConnections` grant. The ENI actions are the six in `AWSLambdaVPCAccessExecutionRole`,
 including `ec2:DescribeSubnets`.
@@ -236,10 +235,9 @@ account (`export CDK_DEFAULT_ACCOUNT=<account id>`; never commit it). Do not pas
       stay on the Worker. A cutover would stop those names until they are recreated: `Suas-Staging-Web` would make
       `staging.suasqrf.com` an alias to CloudFront, and the apex gets no record from this app. The CloudFront
       certificate, API certificate and DKIM records stay pending until that decision. That wait is expected.
-2. **Leave the sandbox in SES** (a new account is in the SES sandbox: it can send only to verified addresses).
-   Verify test recipient addresses for staging, or open an AWS support request for production access (plan §7).
-   Check that the domain identity shows "Verified" and DKIM "Successful" only after a cutover that has passed the
-   suas-specs #61 R6.8 gate and an owner decision. Do not change name servers in order to check this.
+2. **Keep SES disabled.** The pinned release authorizes only D-004 Resend as an external EMAIL
+   provider. The SES identity is dormant infrastructure, not delivery authority. The backend
+   uses sink email and has no SES send permission. A released decision is required before enabling SES.
 3. **Do not enable Bedrock for this template.** R2.15 is not approved, and the API sets
    `SUAS_MODEL_INFERENCE_MODE=disabled`. Model access in the Bedrock console is not a step for this synth.
 4. **Run the migrate function** after every deploy that adds migrations. From a shell with credentials:

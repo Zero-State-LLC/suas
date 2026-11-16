@@ -2,7 +2,7 @@
  * Resend EmailPort (ARCHITECTURE.md §11; NOTIFICATIONS.md §2, §6, §10–§11).
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ChallengeDeliveryFailedError,
   ChannelBackedChallengeDelivery,
@@ -362,6 +362,58 @@ describe('challenge delivery uses the same EMAIL port', () => {
 });
 
 describe('ENVIRONMENT.md §3 — Resend is the released EMAIL mode', () => {
+  it.each(['alert@1', 'followup@1', 'auth.unreleased'])(
+    'refuses STAGING non-auth template %s before any provider call',
+    async (templateVersion) => {
+      const fetch = vi.fn().mockResolvedValue(Response.json({ id: 'synthetic-send' }));
+      vi.stubGlobal('fetch', fetch);
+      try {
+        const config = loadConfig(
+          validEnv({
+            SUAS_ENV: 'STAGING',
+            SUAS_EMAIL_MODE: 'resend',
+            RESEND_API_KEY: API_KEY,
+            SUAS_EMAIL_FROM: FROM,
+          }),
+        );
+        const email = createChannelRegistry(config).get('EMAIL');
+        expect(await email?.send(message({ templateVersion }))).toMatchObject({ accepted: false });
+        expect(fetch).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
+  it.each(['EMAIL_OTP', 'MAGIC_LINK'] as const)(
+    'preserves STAGING authentication delivery for %s',
+    async (method) => {
+      const fetch = vi.fn().mockResolvedValue(Response.json({ id: 'synthetic-auth' }));
+      vi.stubGlobal('fetch', fetch);
+      try {
+        const config = loadConfig(
+          validEnv({
+            SUAS_ENV: 'STAGING',
+            SUAS_EMAIL_MODE: 'resend',
+            RESEND_API_KEY: API_KEY,
+            SUAS_EMAIL_FROM: FROM,
+          }),
+        );
+        const delivery = createChallengeDelivery(config, createChannelRegistry(config));
+        await delivery.deliver({
+          channel: 'EMAIL',
+          destination: DESTINATION,
+          method,
+          secret: 'synthetic-code',
+          expiresAt: new Date('2026-11-16T12:00:00Z'),
+        });
+        expect(fetch).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    },
+  );
+
   it('constructs ResendEmailChannel only when the mode is selected', () => {
     const config = loadConfig(
       validEnv({
