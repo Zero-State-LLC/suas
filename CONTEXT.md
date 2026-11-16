@@ -54,7 +54,10 @@ Every SUAS repository has a `CONTEXT.md`: [suas-ios](https://github.com/scrimsha
 - release manifest: `RELEASE_MANIFEST-0.9.0.md`
 - specs merge pin: `208705cfd2b6aa1ce913ac9e70a2d42a1c9487ad` (`src/release/pins.ts`)
 - implementation authority: `RELEASED_FOR_IMPLEMENTATION`
-- current implementation stage: `SPEC-018` (blocked); SPEC-017 evidence recorded against pin `0.6.0`
+- runtime implementation boundary: `SPEC-017`; prior SPEC-017 evidence covers `0.6.0` only
+- current engineering work: `0.9.0` conformance and synthetic qualification (not yet qualified)
+- next launch qualification stage: `SPEC-018` (blocked)
+- production authorization: `SPEC_018_PRODUCTION_AUTHORIZED=false`
 - production/pilot readiness: `NOT_READY`
 - pin audit: [docs/PIN_INVENTORY.md](docs/PIN_INVENTORY.md)
 
@@ -149,3 +152,7 @@ Do not make operational by implementation default:
 ## Engineering rule
 
 Prefer the simplest implementation mechanism that proves the released invariant. Do not introduce distributed-system complexity without measured need and a released spec change.
+
+## Repository reconciliation: 2026-11-16
+
+The audit target is `Zero-State-LLC/suas`; `Zero-State-LLC/suas-specs` currently contains the pinned 0.9.0 commit but no release tags. The source repository `scrimshawlife-ctrl/suas-specs` has released **0.10.0**. This build remains pinned to 0.9.0; a newer release does not prove its implementation is qualified. Reconcile the repository migration and review the release delta before re-pinning. Native repositories remain under `scrimshawlife-ctrl`. Historical handoff records below retain their original scope.
