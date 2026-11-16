@@ -43,18 +43,31 @@ describe('AWS capability config defaults', () => {
 });
 
 describe('real AWS modes', () => {
-  it('accepts SES, Bedrock and S3 in STAGING with their configuration', () => {
+  it.each(['LOCAL', 'TEST', 'STAGING', 'PRODUCTION'])(
+    'refuses SES in %s until a released decision authorizes it',
+    (environment) => {
+      expect(
+        issuesFor(
+          validEnv({
+            SUAS_ENV: environment,
+            SUAS_EMAIL_MODE: 'ses',
+            SUAS_EMAIL_FROM: 'sender@example.invalid',
+            SUAS_AWS_REGION: 'us-west-2',
+          }),
+        ),
+      ).toContain('SUAS_EMAIL_MODE=ses is not authorized by the pinned release');
+    },
+  );
+
+  it('accepts Bedrock and S3 in STAGING with their configuration', () => {
     const config = loadConfig(
       staging({
         SUAS_AWS_REGION: 'us-west-2',
-        SUAS_EMAIL_MODE: 'ses',
-        SUAS_EMAIL_FROM: 'sender@example.invalid',
         SUAS_MODEL_INFERENCE_MODE: 'bedrock',
         SUAS_OBJECT_STORAGE_MODE: 's3',
         SUAS_S3_BUCKET: 'suas-staging-assets',
       }),
     );
-    expect(config.notifications.email).toBe('ses');
     expect(config.aws.region).toBe('us-west-2');
     expect(config.modelInference.mode).toBe('bedrock');
     expect(config.modelInference.bedrockModelId).toBeUndefined();

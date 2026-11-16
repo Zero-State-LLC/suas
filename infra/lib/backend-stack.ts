@@ -311,7 +311,7 @@ export class BackendStack extends Stack {
         // Worker origin serves /app same-origin (suasqrf.com). A separate
         // frontend domain and the cross-site cookie question are unsettled, so
         // do not list the staging web hostname.
-        SUAS_EMAIL_MODE: 'ses',
+        SUAS_EMAIL_MODE: 'sink',
         SUAS_EMAIL_FROM: config.emailFrom,
         // R2.15 is not approved. The Bedrock adapter is not selected.
         SUAS_MODEL_INFERENCE_MODE: 'disabled',
@@ -337,7 +337,7 @@ export class BackendStack extends Stack {
       env: {
         ...baseEnv,
         ...viaProxy,
-        SUAS_EMAIL_MODE: 'ses',
+        SUAS_EMAIL_MODE: 'sink',
         SUAS_EMAIL_FROM: config.emailFrom,
       },
     });
@@ -357,13 +357,7 @@ export class BackendStack extends Stack {
     });
 
     // ------------------------------------------------------- IAM (least privilege)
-    // SES: send from the one domain identity. No bedrock:InvokeModel: inference is disabled.
-    const sendEmail = new iam.PolicyStatement({
-      actions: ['ses:SendEmail'],
-      resources: [props.sesIdentityArn],
-    });
-    apiFunction.addToRolePolicy(sendEmail);
-    jobWorkerFunction.addToRolePolicy(sendEmail);
+    // No SES send permission: D-004 authorizes only Resend. Inference stays disabled.
     apiFunction.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
