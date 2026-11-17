@@ -154,7 +154,7 @@ async function audit(
     tenantId: input.tenantId,
     actorType: 'SYSTEM',
     actorId: input.actorId,
-    payload: payload as never,
+    payload: payload,
   });
 }
 function canonical(value: unknown): string {

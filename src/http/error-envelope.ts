@@ -38,15 +38,14 @@ export function frameworkMessage(status: number): string {
 }
 
 /**
- * A readable message plus per-field issues for a schema failure. Enum and literal
- * issues get a generic message, since zod's own lists every option and quotes the input.
+ * A readable message plus per-field issues for a schema failure.
  */
 export function validationErrorBody(error: ZodError) {
   const issues = error.issues.slice(0, 20).map((issue) => ({
     path: issue.path.length === 0 ? '(body)' : issue.path.join('.'),
     code: issue.code,
     message:
-      issue.code === 'invalid_enum_value' || issue.code === 'invalid_literal'
+      issue.code === 'invalid_value'
         ? 'Invalid value.'
         : issue.message,
   }));

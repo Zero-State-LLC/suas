@@ -71,10 +71,10 @@ const settlementParams = z.object({
   settlement_id: z.string().uuid(),
 });
 const resolveBody = z.object({
-  requested: z.record(z.unknown()),
-  occurred: z.record(z.unknown()),
-  fulfilled: z.record(z.unknown()),
-  unresolved: z.record(z.unknown()),
+  requested: z.record(z.string(), z.unknown()),
+  occurred: z.record(z.string(), z.unknown()),
+  fulfilled: z.record(z.string(), z.unknown()),
+  unresolved: z.record(z.string(), z.unknown()),
   // The author, the accepter and the requester's confirmation are derived on the server.
   // A client that still sends authored_by, accepted_by_user_id or veteran_confirmed_by
   // has them dropped by this schema (zod strips unknown keys, as everywhere in this API).
