@@ -1,0 +1,143 @@
+# GitHub Actions access for the SUAS synthetic-STAGING deploy workflow (.github/workflows/staging-deploy.yml).
+#
+# OIDC only: no access keys. Each role trusts exactly one protected GitHub Environment through the
+# repository's immutable OIDC subject (`gh api repos/<repo>/actions/oidc/customization/sub`), and only
+# from staging-deploy.yml on main (the job_workflow_ref claim), so no other workflow file or branch copy
+# that names the environment can assume it.
+# - plan: reads the Suas-* stack templates and the bootstrap version, for `cdk diff`. It does not get
+#   the CDK lookup role, whose ReadOnlyAccess could read Lambda configuration (resolved secrets).
+# - deploy: assumes the CDK deploy and file-publishing roles (every stack change, including the
+#   maintenance update, goes through the CDK deploy role) and invokes the migrate and job worker
+#   functions only, never the API or the email relay.
+# Neither role can read secrets or application SSM values, edit IAM, or change this stack.
+# Deploy by hand with a human admin identity: docs/runbooks/aws-staging-bootstrap.md.
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: SUAS GitHub Actions OIDC provider and staging plan/deploy roles
+
+Parameters:
+  SubjectPrefix:
+    Type: String
+    AllowedPattern: '^repo:[^:/]+/[^:/]+$'
+    Description: >-
+      The repository's OIDC subject prefix, from
+      `gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix`
+  WorkflowRepository:
+    Type: String
+    AllowedPattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+    Description: owner/repo as the OIDC job_workflow_ref claim names it (scrimshawlife-ctrl/suas)
+  CreateProvider:
+    Type: String
+    AllowedValues: ['true', 'false']
+    Default: 'true'
+    Description: false when the account already has the token.actions.githubusercontent.com provider
+  CdkQualifier:
+    Type: String
+    Default: hnb659fds
+
+Conditions:
+  MakeProvider: !Equals [!Ref CreateProvider, 'true']
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: MakeProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  PlanRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: suas-gha-staging-plan
+      Description: GitHub staging-deploy plan job (cdk diff from the Suas-* templates; no CDK roles)
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub ${SubjectPrefix}:environment:suas-synthetic-staging-plan
+                token.actions.githubusercontent.com:job_workflow_ref: !Sub ${WorkflowRepository}/.github/workflows/staging-deploy.yml@refs/heads/main
+      Policies:
+        - PolicyName: read-suas-stacks
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadSuasTemplates
+                Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:GetTemplate
+                  - cloudformation:GetTemplateSummary
+                Resource:
+                  - !Sub arn:${AWS::Partition}:cloudformation:us-west-2:${AWS::AccountId}:stack/Suas-*/*
+                  - !Sub arn:${AWS::Partition}:cloudformation:us-east-1:${AWS::AccountId}:stack/Suas-*/*
+              - Sid: ReadBootstrapVersion
+                Effect: Allow
+                Action: ssm:GetParameter
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ssm:us-west-2:${AWS::AccountId}:parameter/cdk-bootstrap/${CdkQualifier}/version
+                  - !Sub arn:${AWS::Partition}:ssm:us-east-1:${AWS::AccountId}:parameter/cdk-bootstrap/${CdkQualifier}/version
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: suas-gha-staging-deploy
+      Description: GitHub staging-deploy deploy job (approved environment only)
+      MaxSessionDuration: 7200
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub ${SubjectPrefix}:environment:suas-synthetic-staging
+                token.actions.githubusercontent.com:job_workflow_ref: !Sub ${WorkflowRepository}/.github/workflows/staging-deploy.yml@refs/heads/main
+      Policies:
+        - PolicyName: staging-deploy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: AssumeCdkRoles
+                Effect: Allow
+                Action: sts:AssumeRole
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-${CdkQualifier}-deploy-role-${AWS::AccountId}-us-west-2
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-${CdkQualifier}-deploy-role-${AWS::AccountId}-us-east-1
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-${CdkQualifier}-file-publishing-role-${AWS::AccountId}-us-west-2
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-${CdkQualifier}-file-publishing-role-${AWS::AccountId}-us-east-1
+              - Sid: ReadSuasStacks
+                Effect: Allow
+                Action:
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                Resource:
+                  - !Sub arn:${AWS::Partition}:cloudformation:us-west-2:${AWS::AccountId}:stack/Suas-*/*
+                  - !Sub arn:${AWS::Partition}:cloudformation:us-east-1:${AWS::AccountId}:stack/Suas-*/*
+              - Sid: InvokeMigrateAndWorker
+                # CloudFormation names functions <stack>-<logical id>-<suffix>. The API and the email
+                # relay are excluded, and GetFunctionConfiguration is withheld because the
+                # environment holds resolved secrets.
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !Sub arn:${AWS::Partition}:lambda:us-west-2:${AWS::AccountId}:function:Suas-Staging-Backend-MigrateFunction*
+                  - !Sub arn:${AWS::Partition}:lambda:us-west-2:${AWS::AccountId}:function:Suas-Staging-Backend-JobWorkerFunction*
+
+Outputs:
+  PlanRoleArn:
+    Description: GitHub variable AWS_PLAN_ROLE_ARN
+    Value: !GetAtt PlanRole.Arn
+  DeployRoleArn:
+    Description: GitHub variable AWS_DEPLOY_ROLE_ARN
+    Value: !GetAtt DeployRole.Arn

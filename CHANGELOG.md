@@ -13,6 +13,11 @@ SPEC-018 is still blocked. Release steps: [RELEASING.md](RELEASING.md).
 
 ## [Unreleased]
 
+### Added
+
+- Manual synthetic-STAGING deploy workflow (`.github/workflows/staging-deploy.yml`). It takes a verified `main` SHA through the full CI, a credential-free build and synth, an OIDC plan (`cdk diff`) and an environment-approved deploy. That deploy quiesces, migrates, then admits the API, the worker and the schedule, deploys the web app and runs the public STAGING suite. Nothing is deployed by this change (`docs/runbooks/aws-staging-bootstrap.md`).
+- CI runs the skill metadata checks and the migration rehearsal on every pull request. Every workflow action is pinned to a commit SHA.
+
 ### Fixed
 
 - After a case is closed and reopened, the next cycle's helper no longer reads the previous cycle's Settlements (`GET /cases/{id}/settlements`, `/settlements/{settlement_id}`) or contact attempts (`GET /cases/{caseId}/contact-attempts`); a helper's standing is per cycle (CASES.md §4.3, DISPATCH.md §13.2, R11.1). The requester still reads every cycle. A helper Settlement read is scoped by the RESOLVED case's current Settlement, a contact write takes the case row lock and re-checks standing so it cannot outlast a concurrent CLOSE, and `closed_at` is the wall-clock time of the close. A contact attempt's `created_at` is the time of that re-check, so a write that outlasts CLOSE and REOPEN stands only on a new-cycle accept and is filed in that cycle.

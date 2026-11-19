@@ -3,9 +3,11 @@
 TypeScript CDK app for the SUAS v1 STAGING environment in `us-west-2` (synthetic data only).
 It follows `V1_PROJECT_PLAN.md` §6 in the SUAS-specs repository.
 
-**Nothing has been deployed.** This app has only been synthesized and tested offline. There is no deploy
-workflow yet, because the AWS account layout is undecided (plan §8 item 17). There is no production
-stack either: production is gated by plan §7. The stack layout takes an environment config, so a
+**Nothing has been deployed.** This app has only been synthesized and tested offline. A manual deploy
+workflow now exists ([`staging-deploy.yml`](../.github/workflows/staging-deploy.yml), see "Deploy workflow" below);
+its first run waits for the AWS foundation and the DNS decision
+([`docs/runbooks/aws-staging-bootstrap.md`](../docs/runbooks/aws-staging-bootstrap.md)). There is no production
+stack: production is gated by plan §7. The stack layout takes an environment config, so a
 production set can be added later without restructuring.
 
 ## Safe by construction
@@ -32,6 +34,45 @@ npm run synth
 ```
 
 Synth needs no Docker. esbuild bundles the Lambda code locally (see "Lambda package").
+
+## Deploy workflow
+
+[`staging-deploy.yml`](../.github/workflows/staging-deploy.yml) deploys one verified `main` commit, by manual
+dispatch and environment approval. It synthesizes once with `npm run synth:deploy`, which is the offline synth
+plus three things:
+
+- the target account (`CDK_DEFAULT_ACCOUNT`), still with no credentials and no lookups;
+- the build commit;
+- `-c deploymentPipeline=true`, which adds the maintenance controls below.
+
+The plain `npm run synth` output is unchanged.
+
+| `DeploymentMode` | API function           | Job worker                            | Schedule |
+| ---------------- | ---------------------- | ------------------------------------- | -------- |
+| `maintenance`    | reserved concurrency 0 | reserved concurrency 0                | disabled |
+| `api`            | its own reservation    | reserved concurrency 0                | disabled |
+| `worker`         | its own reservation    | its own reservation (one manual pass) | disabled |
+| `live`           | its own reservation    | its own reservation                   | enabled  |
+
+"Its own reservation" is what the function has without the pipeline context: a fixed cap when the stack sets
+one, otherwise none (`AWS::NoValue`). The modes never add or drop a cap. The deployment mode does not touch the
+migrate function, so it keeps its own reservation in every mode. Every fixed cap still has to fit in the
+account's Lambda concurrency limit.
+
+The run takes these steps, and stops on the first failure without re-enabling traffic:
+
+1. Quiesce the deployed backend on its own template, and wait for the longest timeout among the functions it
+   throttles.
+2. Deploy the new backend in `maintenance`.
+3. Invoke the migrate function and require the build's schema and pins.
+4. Switch to `api` and check health.
+5. Switch to `worker` and require one worker pass.
+6. Switch to `live`, deploy the web stack, and run `npm run test:e2e:staging:public`.
+
+Pipeline web uploads put hashed `assets/*` first, with immutable caching, and never prune them, so a browser
+holding the previous `index.html` keeps working. `index.html` and the root files revalidate on every request.
+
+Bootstrap, OIDC roles and parameters: [`docs/runbooks/aws-staging-bootstrap.md`](../docs/runbooks/aws-staging-bootstrap.md).
 
 ## Context values
 

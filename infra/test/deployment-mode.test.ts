@@ -10,6 +10,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as scheduler from 'aws-cdk-lib/aws-scheduler';
 import * as schedulerTargets from 'aws-cdk-lib/aws-scheduler-targets';
 import { afterAll, describe, expect, it, vi } from 'vitest';
+import { EXPECTED_SCHEMA_VERSION } from '../../src/db/schema-version.js';
 import { applyDeploymentMode } from '../lib/deployment-mode.js';
 import { repoRoot } from '../lib/lambda-code.js';
 import { synthesize } from './helpers.js';
@@ -145,6 +146,7 @@ describe('deploy workflow maintenance modes', () => {
       expect(backend.Outputs[output].Value).toEqual({ Ref: fn(backend, handler)[0] });
     }
     const [dbId] = only(backend, 'AWS::RDS::DBInstance');
+    expect(backend.Outputs.ExpectedSchemaVersion.Value).toBe(String(EXPECTED_SCHEMA_VERSION));
     expect(backend.Outputs.DatabaseIdentifier.Value).toEqual({ Ref: dbId });
   });
 
@@ -191,6 +193,7 @@ describe('deployment mode on capped functions', () => {
       target: new schedulerTargets.LambdaInvoke(worker, {}),
     }),
     databaseIdentifier: 'db',
+    expectedSchemaVersion: EXPECTED_SCHEMA_VERSION,
   });
   const template = Assertions.fromStack(stack).toJSON() as Template;
 
