@@ -40,6 +40,7 @@ import { REGION, type EnvironmentConfig } from './config.js';
 import { RDS_CA_BUNDLE_FILE, suasLambdaCode } from './lambda-code.js';
 import { applyDeploymentMode, deploymentPipelineEnabled } from './deployment-mode.js';
 import { EmailRelay } from './email-relay.js';
+import { VaVerify } from './va-verify.js';
 
 export interface BackendStackProps extends StackProps {
   readonly config: EnvironmentConfig;
@@ -147,7 +148,8 @@ export class BackendStack extends Stack {
 
     vpc.addGatewayEndpoint('S3Endpoint', { service: ec2.GatewayVpcEndpointAwsService.S3 });
     // One interface endpoint per AWS service the code calls (see README for the source files).
-    // Lambda only, to invoke the email relay (suas #305). Bedrock Runtime and execute-api are not
+    // Lambda only, to invoke the email relay (suas #305) and, with vaSandbox, the VA verify
+    // function (VA_CONFIRMATION_FLOW W9 item 4). Bedrock Runtime and execute-api are not
     // endpoints while inference and chat push stay off.
     const interfaceEndpoints: ReadonlyArray<readonly [string, ec2.InterfaceVpcEndpointAwsService]> =
       [['LambdaEndpoint', ec2.InterfaceVpcEndpointAwsService.LAMBDA]];
@@ -446,6 +448,28 @@ export class BackendStack extends Stack {
     // Email: invoke the email relay and nothing else. No bedrock:InvokeModel: inference is disabled.
     emailRelay.function.grantInvoke(apiFunction);
     emailRelay.function.grantInvoke(jobWorkerFunction);
+
+    // VA_CONFIRMATION_FLOW W9 item 4 (R9.2 option (b)): VA sandbox calls go through the
+    // outside-VPC verify function, built only with `-c vaSandbox=true`. Off, the API keeps
+    // SUAS_VA_CONFIRMATION_MODE=disabled. Only the API may invoke it, over the Lambda endpoint.
+    let vaVerify: VaVerify | undefined;
+    if (config.vaSandbox) {
+      vaVerify = new VaVerify(this, 'VaVerify', {
+        code,
+        logRetention: LOG_RETENTION,
+        suasEnv: config.suasEnv,
+      });
+      apiFunction.addEnvironment('SUAS_VA_CONFIRMATION_MODE', 'sandbox');
+      apiFunction.addEnvironment(
+        'SUAS_VA_CONFIRMATION_RELAY_FUNCTION',
+        vaVerify.function.functionName,
+      );
+      vaVerify.function.grantInvoke(apiFunction);
+      new CfnOutput(this, 'VaVerifySecretName', {
+        description: 'Put the LLC-owned VA sandbox key here by hand (see infra/README.md).',
+        value: vaVerify.secret.secretName,
+      });
+    }
     apiFunction.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
@@ -617,6 +641,18 @@ export class BackendStack extends Stack {
         `${label}RelayFailures`,
         relayFailure,
         `${label}: an email relay invoke was refused (relay_unavailable) or its answer lost (relay_ambiguous_ack).`,
+      );
+    }
+
+    // The secret is deployed with a placeholder, so until the operator stores the key every call
+    // is refused this way. Terms, not a JSON selector: the Node runtime prefixes these lines too.
+    if (vaVerify !== undefined) {
+      alarmOnLogMatches(
+        vaVerify.logGroup,
+        'VaVerifyNotConfigured',
+        'VaVerifyNotConfigured',
+        logs.FilterPattern.allTerms('va_verify_refused', 'not_configured'),
+        'VaVerify: a call was refused because the secret holds no valid VA sandbox key or could not be read (va_verify_refused, not_configured).',
       );
     }
 

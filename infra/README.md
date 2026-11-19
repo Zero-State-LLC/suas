@@ -48,17 +48,18 @@ Pass with `-c name=value` (or in `cdk.json`). Defaults are the values the user c
 | `browserTenantId`        | `00000000-0000-4000-8000-000000000001` | `SUAS_BROWSER_TENANT_ID`, the tenant new sign-ups join (same value the retired Worker used)                                |
 | `availabilityZones`      | first two from `Fn::GetAZs`            | Comma list of `us-west-2` zones, if an endpoint service is missing in one                                                  |
 | `webAdapterLayerVersion` | `30`                                   | Version of the AWS-published Lambda Web Adapter layer                                                                      |
+| `vaSandbox`              | `false`                                | `true` builds the VA verify function and sets `SUAS_VA_CONFIRMATION_MODE=sandbox` on the API. See "VA confirmation".       |
 
 Hostnames must be inside `rootDomain`, because certificates are validated in the zone this app owns.
 
 ## Stacks
 
-| Stack                  | Region    | Contents                                                                                                                                                                                                                                                               |
-| ---------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Suas-Dns`             | us-west-2 | Public hosted zone for `suasqrf.com` (retained on delete), the Resend mail records carried over from Cloudflare, `NameServers` output. No apex or `www` record. No SES identity (suas #305).                                                                           |
-| `Suas-Staging-WebCert` | us-east-1 | DNS-validated ACM certificate for the web hostname (CloudFront needs us-east-1). Passed to the web stack with `crossRegionReferences`.                                                                                                                                 |
-| `Suas-Staging-Backend` | us-west-2 | VPC (isolated subnets), VPC endpoints, RDS PostgreSQL 17 (no RDS Proxy, R14.1 proposal), secrets, assets bucket, API / job worker / migrate Lambdas, the email relay Lambda (outside the VPC), HTTP API with a custom domain, EventBridge Scheduler. No WebSocket API. |
-| `Suas-Staging-Web`     | us-west-2 | Private S3 bucket, CloudFront distribution with OAC, `staging.suasqrf.com` A and AAAA alias, `web/dist` upload (only if `web/dist` exists at synth time).                                                                                                              |
+| Stack                  | Region    | Contents                                                                                                                                                                                                                                                                                                                         |
+| ---------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Suas-Dns`             | us-west-2 | Public hosted zone for `suasqrf.com` (retained on delete), the Resend mail records carried over from Cloudflare, `NameServers` output. No apex or `www` record. No SES identity (suas #305).                                                                                                                                     |
+| `Suas-Staging-WebCert` | us-east-1 | DNS-validated ACM certificate for the web hostname (CloudFront needs us-east-1). Passed to the web stack with `crossRegionReferences`.                                                                                                                                                                                           |
+| `Suas-Staging-Backend` | us-west-2 | VPC (isolated subnets), VPC endpoints, RDS PostgreSQL 17 (no RDS Proxy, R14.1 proposal), secrets, assets bucket, API / job worker / migrate Lambdas, the email relay Lambda (outside the VPC), the VA verify Lambda (outside the VPC, `vaSandbox` only), HTTP API with a custom domain, EventBridge Scheduler. No WebSocket API. |
+| `Suas-Staging-Web`     | us-west-2 | Private S3 bucket, CloudFront distribution with OAC, `staging.suasqrf.com` A and AAAA alias, `web/dist` upload (only if `web/dist` exists at synth time).                                                                                                                                                                        |
 
 ### Email: Resend through a relay (suas #305)
 
@@ -69,7 +70,7 @@ it one rendered message with its idempotency key; it sends with the Resend adapt
 (`src/notifications/resend-email.ts`, D-004) and answers with that adapter's acknowledgement.
 
 - The relay runs **outside the VPC** with **no database setting** and its own role: it can write its log
-  group and read its one secret, nothing else. The API and job worker roles may invoke the relay and no
+  group and read the current (`AWSCURRENT`) version of its one secret, nothing else. The API and job worker roles may invoke the relay and no
   other function.
 - The relay reads the Resend API key at run time from the secret named by the `EmailRelaySecretName` output,
   cached per container. The key is not in the template, any Lambda environment or any log. The sender
@@ -83,6 +84,35 @@ it one rendered message with its idempotency key; it sends with the Resend adapt
   reason `relay_ambiguous_ack` (no blind retry). There are no Resend webhooks yet, so `DELIVERED` and `BOUNCED`
   are not reached.
 - Until the secret holds the real key, every send is retried and then settles `UNDELIVERABLE`.
+
+### VA confirmation: the verify function (VA_CONFIRMATION_FLOW W9 item 4)
+
+Off by default: the API runs `SUAS_VA_CONFIRMATION_MODE=disabled` and the confirm route answers
+`503 ID_VERIFICATION_UNAVAILABLE`. With `-c vaSandbox=true` the stack adds the **VA verify function**
+(`src/aws/va-verify-lambda.ts`, construct `lib/va-verify.ts`; R9.2 option (b)) and sets
+`SUAS_VA_CONFIRMATION_MODE=sandbox` and `SUAS_VA_CONFIRMATION_RELAY_FUNCTION` on the API. The API stays in the
+isolated subnets, invokes the function through the Lambda interface endpoint with one projection, and gets back
+only the normalized result and failure class (`src/identity/va-confirmation-lambda-relay.ts`).
+
+- The function runs **outside the VPC** with **no database setting** and its own role: it can write its log
+  group and read the current (`AWSCURRENT`) version of its one secret, nothing else. Only the API role may invoke it; the job worker may not.
+- It holds the fixed sandbox base URL (`https://sandbox-api.va.gov/services/veteran-confirmation/v1`, a
+  constant, not a setting) and reads the key at run time from the secret named by the `VaVerifySecretName`
+  output, cached per container for at most five minutes and read again sooner if VA refuses the key. The key
+  is not in the template, any Lambda environment or any log. The API holds neither the key nor the base URL.
+- It refuses outside `STAGING`. LOCAL `sandbox` has no relay function and calls the VA sandbox directly from
+  the API process, which has internet access there; STAGING must use this function because the API's subnets
+  have no internet egress (`src/identity/va-confirmation-factory.ts`).
+- Before sending anything it checks the vendored projection is the approved one, as the API does when it starts.
+  The approval record is part of the deployed code, so revoking it means a redeploy (with the updated record,
+  or without `vaSandbox`); every container then runs the new code. It logs only the D035 §13 telemetry (status,
+  failure class, latency bucket), never a projection value or a VA response body.
+- Its own egress is not host-filtered: the control is what it holds, not the network path (W9 item 4).
+- Until the secret holds the real key, every confirm answers `UNAVAILABLE` / `CONFIGURATION_INVALID`, which
+  never counts toward the attempt limits. Self-attestation stays available. Each such refusal is logged as
+  `va_verify_refused` / `not_configured`, and the `VaVerifyNotConfigured` alarm fires on one in 5 minutes (see
+  "Alarms"). Nothing fires before someone tries to confirm, so the deploy step below still checks the key.
+- Synthetic VA test identities only.
 
 ### Network
 
@@ -110,13 +140,14 @@ The Bedrock adapter (`src/inference/bedrock-inference.ts`) and the API Gateway p
 them and does not create `bedrock-runtime` or `execute-api` endpoints. R2.15 is not approved.
 R6.12 is not accepted.
 
-| Service             | SDK client               | Code that uses it                                                             | Endpoint           |
-| ------------------- | ------------------------ | ----------------------------------------------------------------------------- | ------------------ |
-| AWS Lambda (Invoke) | `@aws-sdk/client-lambda` | `src/notifications/lambda-relay-sender.ts` (`InvokeCommand`, the email relay) | interface `lambda` |
-| Amazon S3           | `@aws-sdk/client-s3`     | `src/storage/s3-object-storage.ts` (put, get, delete)                         | gateway `s3`       |
+| Service             | SDK client               | Code that uses it                                                                       | Endpoint           |
+| ------------------- | ------------------------ | --------------------------------------------------------------------------------------- | ------------------ |
+| AWS Lambda (Invoke) | `@aws-sdk/client-lambda` | `src/notifications/lambda-relay-sender.ts` (`InvokeCommand`, the email relay)           | interface `lambda` |
+| AWS Lambda (Invoke) | `@aws-sdk/client-lambda` | `src/identity/va-confirmation-lambda-relay.ts` (the VA verify function, vaSandbox only) | interface `lambda` |
+| Amazon S3           | `@aws-sdk/client-s3`     | `src/storage/s3-object-storage.ts` (put, get, delete)                                   | gateway `s3`       |
 
 Not needed: **Secrets Manager** inside the VPC (the in-VPC code reads configuration from environment variables;
-only the relay, outside the VPC, reads its secret), **CloudWatch Logs** (the code never calls it; Lambda logging does not use the VPC), **STS/KMS**
+only the relays, outside the VPC, read their secrets), **CloudWatch Logs** (the code never calls it; Lambda logging does not use the VPC), **STS/KMS**
 (credentials come from the Lambda role).
 
 ### Assets bucket
@@ -212,6 +243,7 @@ each function's environment is checked against the application's own config vali
 | `SUAS_MIGRATIONS_MODE`                                                                          | `validate` (the migrate function uses `apply`; the job worker uses `off`)                                                            |
 | `SUAS_BROWSER_AUTH_MODE`, `SUAS_BROWSER_TENANT_ID`                                              | `email_otp`, the `browserTenantId` context                                                                                           |
 | `SUAS_EMAIL_MODE`, `SUAS_EMAIL_RELAY_FUNCTION`                                                  | `resend`, the relay function name (API and job worker). `RESEND_API_KEY` and `SUAS_EMAIL_FROM` are set on the relay only.            |
+| `SUAS_VA_CONFIRMATION_MODE`, `SUAS_VA_CONFIRMATION_RELAY_FUNCTION`                              | unset (`disabled`); with `vaSandbox=true`, `sandbox` and the verify function name (API only). No VA key or base URL on the API.      |
 | `SUAS_SMS_MODE`                                                                                 | `sink` (as today's staging)                                                                                                          |
 | `SUAS_AWS_REGION`                                                                               | `us-west-2`                                                                                                                          |
 | `SUAS_MODEL_INFERENCE_MODE`                                                                     | `disabled`. R2.15 is not approved, so no model id is set.                                                                            |
@@ -268,7 +300,9 @@ bucket with no condition, so a missing image reads as 404 (`PHOTOS_GONE`), not 4
 L4.7). AWS documents the 404 only for an unconditioned grant; listing shows key names, which are opaque ids. There is no `bedrock:InvokeModel` grant and no
 `execute-api:ManageConnections` grant. The ENI actions are the six in `AWSLambdaVPCAccessExecutionRole`,
 including `ec2:DescribeSubnets`. The email relay is not in the VPC: its role has no ENI actions, only its log
-group and `secretsmanager:GetSecretValue`/`DescribeSecret` on its own secret.
+group and `secretsmanager:GetSecretValue`/`DescribeSecret` on its own secret. With `vaSandbox=true` the API also
+gets `lambda:InvokeFunction` on the VA verify function only, and that function's role has the same shape as the
+email relay's: its log group and its own secret.
 
 ### Logs
 
@@ -287,6 +321,8 @@ failures, `relay_ambiguous_ack` (the invoke's answer was lost) and `relay_unavai
 from the `email_send` outcome line (`src/notifications/channels.ts`); losing the one Lambda endpoint zone shows here.
 They match terms, because the Node runtime prefixes the job worker's lines. An alarm on the instance's
 `DatabaseConnections` (maximum over 5 minutes) fires at 70, between the budget of 52 and `max_connections` 80.
+With `vaSandbox=true`, the VA verify function's log group also counts `va_verify_refused` lines with reason
+`not_configured` (no valid key in its secret, or the secret could not be read) and alarms on one in 5 minutes.
 **There is no notification target yet**, so the alarms only show in the
 CloudWatch console until someone picks a topic (an SNS topic and subscriber are not created here). The inline
 job dispatcher in the API logs a different message (`[suas] job <type> failed`, `src/app.ts`) that these filters
@@ -324,6 +360,16 @@ account (`export CDK_DEFAULT_ACCOUNT=<account id>`; never commit it). Do not pas
 5. **Run the migrate function (manual step 4).**
 6. Build the web app (above), then `cdk deploy Suas-Staging-Web`.
 7. Run the fixture seed (manual step 6), then smoke-test.
+8. **Store the VA sandbox key, only once the owner turns VA on.** Until then the backend is deployed without
+   `vaSandbox`, the API stays `SUAS_VA_CONFIRMATION_MODE=disabled`, and there is no secret to fill: skip this step.
+   When the owner turns it on, deploy the backend with `-c vaSandbox=true`, then type the LLC-owned key yourself
+   (manual step 7; a leading space keeps it out of shell history in most shells):
+   ` aws secretsmanager put-secret-value --secret-id <VaVerifySecretName output> --secret-string '{"SUAS_VA_CONFIRMATION_API_KEY":"<key>"}'`
+   Verify without reading the key back. `aws secretsmanager describe-secret --secret-id <VaVerifySecretName output> --query LastChangedDate`
+   shows the time of the put. Then confirm one synthetic VA test identity in the app and read the verify
+   function's log group (`aws cloudformation describe-stack-resources --stack-name Suas-Staging-Backend --query "StackResources[?starts_with(LogicalResourceId,'VaVerifyLogs')].PhysicalResourceId"`):
+   `va_verify_refused` with `not_configured` means the key is missing or malformed, a `va_verify` line with
+   `AUTHENTICATION_REJECTED` means VA refused it, and any other `va_verify` line means VA took it.
 
 ## Manual steps
 
@@ -366,6 +412,20 @@ account (`export CDK_DEFAULT_ACCOUNT=<account id>`; never commit it). Do not pas
    action refuses outside STAGING, refuses any other address or any user id not in the registry, checks the
    schema version first, and a re-run creates nothing new. Details:
    [docs/runbooks/aws-staging-fixtures.md](../docs/runbooks/aws-staging-fixtures.md).
+7. **Turn on the VA sandbox, and put the VA sandbox key into the verify function's secret** (only when the
+   VA flow is to be shown; you do this yourself, no tool or agent reads or writes the key).
+   1. The key must be an **LLC-owned** VA sandbox key, not a personal one (VA_CONFIRMATION_FLOW W9 item 3,
+      developer.va.gov terms).
+   2. Deploy the backend with `-c vaSandbox=true`. This creates the function and its secret and switches the API
+      to `sandbox`.
+   3. Store the key in the secret named by the `VaVerifySecretName` output. Type the command yourself so the key
+      stays out of files; a leading space keeps it out of shell history in most shells:
+      ` aws secretsmanager put-secret-value --secret-id <VaVerifySecretName> --secret-string '{"SUAS_VA_CONFIRMATION_API_KEY":"<key>"}'`
+   4. No redeploy is needed: until a valid key is stored the function reads the secret on every call, and after
+      that again on a cold start, every five minutes, or when VA refuses the key. To rotate, `put-secret-value` again
+      with the new key; every warm container uses it within five minutes.
+   5. To turn it off, deploy without `vaSandbox` (or `-c vaSandbox=false`): the API returns to `disabled`, and
+      the function and its secret are deleted.
 
 ## Records on Cloudflare today
 
